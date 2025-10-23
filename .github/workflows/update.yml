@@ -1,0 +1,34 @@
+name: Update data
+
+on:
+  schedule:
+    - cron: '0 6 * * *'   # daily 06:00 UTC
+    - cron: '0 6 * * 1'   # weekly Monday 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-data:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: pip install -r etl/requirements.txt
+
+      - name: Run ETL
+        run: python etl/main.py
+
+      - name: Commit updated data
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: refresh data"
+          file_pattern: data/latest.json

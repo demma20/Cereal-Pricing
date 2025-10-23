@@ -1,5 +1,71 @@
 [
   {
+  "date": "2025-09-01",
+  "country": "United States",
+  "source": "USDA AMS Market News",
+  "commodity": "soy",
+  "product_form": "grain",
+  "market_level": "wholesale",
+  "price_per_kg": 0.52,
+  "currency": "USD",
+  "unit_raw": "USD/kg",
+  "frequency": "weekly",
+  "notes": "manual"
+},
+{
+  "date": "2025-09-01",
+  "country": "United States",
+  "source": "USDA AMS Market News",
+  "commodity": "soybean_meal",
+  "product_form": "meal_44_48",
+  "market_level": "wholesale",
+  "price_per_kg": 0.41,
+  "currency": "USD",
+  "unit_raw": "USD/kg",
+  "frequency": "weekly",
+  "notes": "manual"
+},
+{
+  "date": "2025-09-01",
+  "country": "United States",
+  "source": "USDA AMS Market News",
+  "commodity": "chicken",
+  "product_form": "",
+  "market_level": "wholesale",
+  "price_per_kg": 2.10,
+  "currency": "USD",
+  "unit_raw": "USD/kg",
+  "frequency": "weekly",
+  "notes": "manual"
+},
+{
+  "date": "2025-09-01",
+  "country": "United States",
+  "source": "USDA AMS Market News",
+  "commodity": "beef",
+  "product_form": "",
+  "market_level": "wholesale",
+  "price_per_kg": 4.80,
+  "currency": "USD",
+  "unit_raw": "USD/kg",
+  "frequency": "weekly",
+  "notes": "manual"
+},
+{
+  "date": "2025-09-01",
+  "country": "United States",
+  "source": "USDA AMS Market News",
+  "commodity": "pork",
+  "product_form": "",
+  "market_level": "wholesale",
+  "price_per_kg": 2.60,
+  "currency": "USD",
+  "unit_raw": "USD/kg",
+  "frequency": "weekly",
+  "notes": "manual"
+}
+
+  {
     "date": "2025-08-07",
     "country": "EU",
     "source": "EC Agri-food Portal",

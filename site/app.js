@@ -25,11 +25,21 @@ async function load() {
     const labels = rows.map(r => r.date);
     const values = rows.map(r => r.price_per_kg);
     const last = rows[rows.length-1];
+    // after computing `last`
+    document.getElementById('latest').textContent =
+      last ? `${last.usd_per_kg?.toFixed(2)} USD` : '—';
+    
+    document.getElementById('latestDate').textContent =
+      last ? last.date : '—';
+    
+    document.getElementById('source').textContent =
+      last ? `${last.market_level} • ${last.source} • FX ${last.fx_source} (${last.fx_date}) — 1 ${last.currency} = ${last.fx_rate_to_usd?.toFixed(4)} USD`
+           : '—';
 
     $('latest').textContent = last ? `${last.price_per_kg.toFixed(2)} ${last.currency}` : '—';
     $('usd').textContent = last && last.usd_per_kg ? `$${last.usd_per_kg.toFixed(2)} USD` : '—';
     $('meta').textContent = last ? `${last.market_level} • ${last.source}` : '—';
-
+  
     if (chart) chart.destroy();
     const ctx = document.getElementById('chart').getContext('2d');
     chart = new Chart(ctx, {

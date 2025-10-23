@@ -18,7 +18,7 @@
     canvas { background: #fff; border:1px solid #e5e7eb; border-radius: .75rem; padding: .5rem; }
     @media (max-width: 900px){ .filters{grid-template-columns:1fr 1fr}; .cards{grid-template-columns:1fr} }
     .chart-wrap { height: 380px; }
-    /*.container { max-width: 1200px; margin: 0 auto; }*/
+    .container { max-width: 1200px; margin: 0 auto; }
   </style>
 </head>
 <body>
@@ -33,7 +33,11 @@
     <select id="market"></select>
     <select id="form"></select>
   </div>
-
+  <div class="container">
+    <div class="chart-wrap">
+      <canvas id="chart"></canvas>
+    </div>
+  </div>
   <div class="cards">
     <div class="card"><div class="muted">Latest (per kg)</div><div id="latest" style="font-size:1.8rem;font-weight:700;"></div></div>
     <div class="card"><div class="muted">Latest date</div><div id="latestDate" style="font-size:1.3rem;"></div></div>

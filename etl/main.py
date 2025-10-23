@@ -24,6 +24,11 @@ def add_usd_and_fx(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df["fx_rate_to_usd"] = df["currency"].map(to_usd).astype(float)  # USD per 1 local currency
     df["usd_per_kg"] = (df["price_per_kg"] * df["fx_rate_to_usd"]).round(4)
+    usd_per_inr = to_usd.get("INR")  # USD per 1 INR (e.g., 0.012)
+    if usd_per_inr:
+        df["inr_per_kg"] = (df["usd_per_kg"] / usd_per_inr).round(2)       
+        df["fx_usd_per_inr"] = usd_per_inr                                  
+        df["fx_inr_per_usd"] = (1.0 / usd_per_inr) 
     df["fx_date"] = fx_date
     df["fx_source"] = fx_source
     return df

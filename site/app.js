@@ -23,18 +23,21 @@ async function load() {
     const rows = data.filter(d => d.country===c && d.commodity===k).sort((a,b)=> new Date(a.date) - new Date(b.date));
 
     const labels = rows.map(r => r.date);
-    const values = rows.map(r => r.price_per_kg);
-    const last = rows[rows.length-1];
+    const values = series.map(r => r.usd_per_kg);
+    const last = series.at(-1);
     // after computing `last`
     document.getElementById('latest').textContent =
-      last ? `${last.usd_per_kg?.toFixed(2)} USD` : '—';
+      series.length ? `$${(series.at(-1).usd_per_kg ?? NaN).toFixed(2)} USD` : '—';
     
-    document.getElementById('latestDate').textContent =
-      last ? last.date : '—';
+    document.getElementById('inr').textContent =
+      series.length && series.at(-1).inr_per_kg != null
+        ? `${series.at(-1).inr_per_kg.toFixed(0)} INR`
+        : '—';
+
     
-    document.getElementById('source').textContent =
-      last ? `${last.market_level} • ${last.source} • FX ${last.fx_source} (${last.fx_date}) — 1 ${last.currency} = ${last.fx_rate_to_usd?.toFixed(4)} USD`
-           : '—';
+    document.getElementById('source').textContent = last
+      ? `${last.market_level} • ${last.source} • FX ${last.fx_source} (${last.fx_date}) — 1 USD = ${ (last.fx_inr_per_usd || (1/(last.fx_usd_per_inr||NaN)) ).toFixed(2) } INR`
+      : '—';
 
     $('latest').textContent = last ? `${last.price_per_kg.toFixed(2)} ${last.currency}` : '—';
     $('usd').textContent = last && last.usd_per_kg ? `$${last.usd_per_kg.toFixed(2)} USD` : '—';

@@ -1,10 +1,12 @@
-
+# etl/main.py
 import json
 from pathlib import Path
 import pandas as pd
+
 from sources.normalize import ensure_schema
 from sources import eu, india, thailand, china, us
-from config import PREF_BY_COMMODITY, COUNTRY_OVERRIDES, FX_TO_USD
+from config import PREF_BY_COMMODITY, COUNTRY_OVERRIDES, FX_FALLBACK_TO_USD
+from fx import load_fx  # NEW
 
 OUT = Path(__file__).resolve().parents[1] / "data" / "latest.json"
 
@@ -17,13 +19,18 @@ def pick_preferred(df: pd.DataFrame) -> pd.DataFrame:
         out.append(grp.sort_values("__rank").iloc[0].drop(labels="__rank"))
     return pd.DataFrame(out)
 
-def add_usd(df: pd.DataFrame) -> pd.DataFrame:
+def add_usd_and_fx(df: pd.DataFrame) -> pd.DataFrame:
+    to_usd, fx_date, fx_source = load_fx(FX_FALLBACK_TO_USD)
     df = df.copy()
-    df["usd_per_kg"] = (df["price_per_kg"] * df["currency"].map(FX_TO_USD).fillna(0)).round(4)
+    df["fx_rate_to_usd"] = df["currency"].map(to_usd).astype(float)  # USD per 1 local currency
+    df["usd_per_kg"] = (df["price_per_kg"] * df["fx_rate_to_usd"]).round(4)
+    df["fx_date"] = fx_date
+    df["fx_source"] = fx_source
     return df
 
 def run():
     frames = []
+    # (same source generation as you have now) ...
     frames.append(eu.generate_sample("EU","EC Agri-food Portal","soy",0.55, product_form="grain", currency="EUR", market_level="wholesale"))
     frames.append(eu.generate_sample("EU","EC Agri-food Portal","soybean_meal",0.42, product_form="meal_44_48", currency="EUR", market_level="wholesale"))
     for meat, base in [("chicken",2.2),("beef",4.5),("pork",2.8)]:
@@ -41,7 +48,7 @@ def run():
     df = pd.concat(frames, ignore_index=True)
     df = ensure_schema(df)
     df = pick_preferred(df)
-    df = add_usd(df)
+    df = add_usd_and_fx(df)  # NEW
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     with open(OUT, "w") as f:

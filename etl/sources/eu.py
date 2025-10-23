@@ -1,7 +1,6 @@
 
 from datetime import date, timedelta
 import pandas as pd
-
 def generate_sample(country, source, commodity, base, drift=0.002, n_weeks=12, **extras):
     today = date.today()
     rows = []
@@ -16,12 +15,10 @@ def generate_sample(country, source, commodity, base, drift=0.002, n_weeks=12, *
             "commodity": commodity,
             "product_form": extras.get("product_form",""),
             "market_level": extras.get("market_level","wholesale"),
-            "price_per_kg": round(price, 2),
+            "price_per_kg": round(price, 3),
             "currency": extras.get("currency","USD"),
-            "unit_raw": extras.get("unit_raw","USD/kg"),
+            "unit_raw": extras.get("unit_raw", f"{extras.get('currency','USD')}/kg"),
             "frequency": extras.get("frequency","weekly"),
             "notes": "placeholder – replace with real extractor"
         })
     return pd.DataFrame(rows)
-
-# TODO: Replace with EC Agri-food Data Portal API calls

@@ -61,11 +61,9 @@ async function load() {
     $('inr').textContent = fmtINR(lastINR);
 
     // Source / FX note (card 3)
-    const fxNote = (inrPerUsd != null && last.fx_source)
-      ? ` • FX ${last.fx_source}${last.fx_date ? ` (${last.fx_date})` : ''} — 1 USD ≈ ${Math.round(inrPerUsd).toLocaleString('en-IN')} INR`
-      : '';
-    $('source').textContent = `${last.market_level || ''} • ${last.source || ''}${fxNote}`;
-
+    $('source').textContent = last
+      ? [last.market_level, last.source].filter(Boolean).join(' • ')
+      : '—';
     // Draw chart (USD/kg)
     if (chart) chart.destroy();
     const ctx = $('chart').getContext('2d');

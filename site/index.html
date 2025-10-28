@@ -1,4 +1,3 @@
-
 <!doctype html>
 <html lang="en">
 <head>
@@ -17,6 +16,7 @@
     .muted { color: #6b7280; font-size: .9rem; }
     .chart-wrap { height: 360px; }
     .chart-wrap canvas { width: 100%; height: 100%; display:block; background:#fff; border:1px solid #e5e7eb; border-radius:.75rem; }
+    .hidden { display: none; }  <!-- add this for hiding selects in "all" view -->
     @media (max-width: 900px){ .cards{grid-template-columns:1fr} }
   </style>
 </head>
@@ -25,6 +25,13 @@
     <header>
       <h1>Agri Prices</h1>
       <div class="filters">
+        <!-- NEW: view switcher -->
+        <select id="view" aria-label="View">
+          <option value="single">Single (by country & commodity)</option>
+          <option value="all">All series (color=country, dashed=soy)</option>
+        </select>
+
+        <!-- Existing selects -->
         <select id="country"></select>
         <select id="commodity"></select>
       </div>

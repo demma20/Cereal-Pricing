@@ -25,13 +25,13 @@
     <header>
       <h1>Agri Prices</h1>
       <div class="filters">
-        <!-- NEW: view switcher -->
-        <select id="view" aria-label="View">
-          <option value="single">Single (by country & commodity)</option>
-          <option value="all">All series (color=country, dashed=soy)</option>
+        <select id="view">
+          <option value="single">Single series</option>
+          <option value="all">All series</option>
+          <option value="chicken">Chicken only</option>
+          <option value="soy">Soy only</option>
         </select>
-
-        <!-- Existing selects -->
+    
         <select id="country"></select>
         <select id="commodity"></select>
       </div>

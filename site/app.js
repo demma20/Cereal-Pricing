@@ -4,34 +4,74 @@ async function load() {
 
   const $ = id => document.getElementById(id);
   const uniq = arr => [...new Set(arr)].sort();
+  const by = (arr, fn) => arr.reduce((m, x) => ((m[fn(x)] ??= []).push(x), m), {});
 
+  // --- DOM refs
+  const selView = $('view');
+  const selCountry = $('country');
+  const selCommodity = $('commodity');
+
+  // --- Normalize commodities into two buckets for styling (chicken/soy)
+  const normCommodity = c => {
+    if (!c) return c;
+    const s = String(c).toLowerCase();
+    if (s.includes('soy')) return 'soy';
+    if (s.includes('chicken')) return 'chicken';
+    return c; // fallback (shows as-is in single view)
+  };
+
+  // --- Lists for selects
   const countries = uniq(data.map(d => d.country));
-  const commodities = uniq(data.map(d => d.commodity));
+  const commodities = uniq(data.map(d => normCommodity(d.commodity)));
 
-  // Formatters
+  // --- Formatters
   const fmtUSD = v => (v == null || Number.isNaN(v) ? "—" : `$${v.toFixed(2)} USD/kg`);
   const fmtINR = v => (v == null || Number.isNaN(v) ? "—" : `₹${Math.round(v).toLocaleString("en-IN")} INR/kg`);
 
-  // Populate selects
+  // --- Populate selects
   function fill(el, items){ el.innerHTML = items.map(x=>`<option value="${x}">${x}</option>`).join(''); }
-  fill($('country'), countries);
-  fill($('commodity'), commodities);
+  fill(selCountry, countries);
+  fill(selCommodity, commodities);
 
-  $('country').value = countries.includes('United States') ? 'United States' : countries[0];
-  $('commodity').value = 'soy';
+  selCountry.value = countries.includes('United States') ? 'United States' : countries[0];
+  selCommodity.value = commodities.includes('soy') ? 'soy' : commodities[0];
+  selView.value = 'single'; // default
 
+  // --- Chart state
   let chart;
 
-  function render(){
-    const c = $('country').value;
-    const k = $('commodity').value;
+  // --- Helpers
+  const usdFromRow = r => {
+    if (r.usd_per_kg != null) return r.usd_per_kg;
+    if (r.price_per_kg != null && r.fx_rate_to_usd != null) return r.price_per_kg * r.fx_rate_to_usd;
+    return null;
+  };
 
+  const allDates = uniq(data.map(d => d.date)).sort((a,b)=> new Date(a) - new Date(b));
+
+  // Color palette (cycled per country)
+  const palette = [
+    '#2563eb', '#16a34a', '#dc2626', '#7c3aed', '#059669',
+    '#d97706', '#0ea5e9', '#f43f5e', '#065f46', '#9ca3af'
+  ];
+  const countryColor = {};
+  countries.forEach((c, i) => countryColor[c] = palette[i % palette.length]);
+
+  function syncControlsVisibility(){
+    const all = selView.value === 'all';
+    selCountry.classList.toggle('hidden', all);
+    selCommodity.classList.toggle('hidden', all);
+  }
+
+  function renderSingle(){
+    const c = selCountry.value;
+    const kRaw = selCommodity.value;
+    // In single view, match original raw commodity names if possible; also accept normalized.
     const rows = data
-      .filter(d => d.country === c && d.commodity === k)
+      .filter(d => d.country === c && (normCommodity(d.commodity) === kRaw))
       .sort((a,b)=> new Date(a.date) - new Date(b.date));
 
-    // If no data, clear UI and bail
-    if (!rows.length) {
+    if (!rows.length){
       $('latest').textContent = '—';
       $('inr').textContent = '—';
       $('source').textContent = '—';
@@ -40,38 +80,35 @@ async function load() {
     }
 
     const labels = rows.map(r => r.date);
-
-    // Prefer precomputed USD, else derive via row FX
-    const usdFromRow = r => {
-      if (r.usd_per_kg != null) return r.usd_per_kg;
-      if (r.price_per_kg != null && r.fx_rate_to_usd != null) return r.price_per_kg * r.fx_rate_to_usd;
-      return null;
-    };
     const values = rows.map(usdFromRow);
-
     const last = rows[rows.length - 1];
 
-    // Headline USD (card 1)
+    // Cards
     const lastUSD = usdFromRow(last);
     $('latest').textContent = fmtUSD(lastUSD);
 
-    // Headline INR (card 2): prefer precomputed, else USD * INR per USD from the row
     const inrPerUsd = last.fx_inr_per_usd ?? (last.fx_usd_per_inr ? 1 / last.fx_usd_per_inr : null);
     const lastINR = last.inr_per_kg ?? (lastUSD != null && inrPerUsd != null ? lastUSD * inrPerUsd : null);
     $('inr').textContent = fmtINR(lastINR);
 
-    // Source / FX note (card 3)
-    $('source').textContent = last
-      ? [last.market_level, last.source].filter(Boolean).join(' • ')
-      : '—';
-    // Draw chart (USD/kg)
+    $('source').textContent = last ? [last.market_level, last.source].filter(Boolean).join(' • ') : '—';
+
+    // Draw
     if (chart) chart.destroy();
     const ctx = $('chart').getContext('2d');
     chart = new Chart(ctx, {
       type: 'line',
       data: {
         labels,
-        datasets: [{ label: `${c} • ${k} (USD/kg)`, data: values, tension: 0.25 }]
+        datasets: [{
+          label: `${c} • ${kRaw} (USD/kg)`,
+          data: values,
+          tension: 0.25,
+          borderColor: countryColor[c],
+          borderWidth: 2,
+          borderDash: normCommodity(kRaw) === 'soy' ? [6, 4] : [],
+          pointRadius: 0
+        }]
       },
       options: {
         responsive: true,
@@ -81,24 +118,107 @@ async function load() {
         elements: { point: { radius: 0 } },
         plugins: {
           legend: { display: true },
-          decimation: { enabled: true, algorithm: 'lttb', samples: 200 }
+          tooltip: {
+            callbacks: {
+              label: (ctx) => {
+                const v = ctx.parsed.y;
+                return (v == null || Number.isNaN(v)) ? '—' : `$${v.toFixed(2)} USD/kg`;
+              }
+            }
+          },
+          decimation: { enabled: true, algorithm: 'lttb', samples: 400 }
         },
         scales: {
           x: { ticks: { maxTicksLimit: 8 } },
-          y: {
-            min: 0,              // 👈 start at 0
-            beginAtZero: true,   // 👈 keep baseline at 0
-            ticks: { maxTicksLimit: 6 }
-          }
-          // If you ever add a 2nd axis:
-          // y1: { min: 0, beginAtZero: true }
+          y: { min: 0, beginAtZero: true, ticks: { maxTicksLimit: 6 } }
         },
         devicePixelRatio: 1
       }
     });
   }
 
-  ['country','commodity'].forEach(id => $(id).addEventListener('change', render));
+  function renderAll(){
+    // Cards: not meaningful for multi-series
+    $('latest').textContent = '—';
+    $('inr').textContent = '—';
+    $('source').textContent = 'Multiple series • USD/kg';
+
+    // Build series for each (country, type=chicken|soy)
+    const grouped = by(
+      data.map(d => ({...d, type: normCommodity(d.commodity)}))
+          .filter(d => d.type === 'chicken' || d.type === 'soy'),
+      d => `${d.country}|||${d.type}`
+    );
+
+    const labels = allDates;
+
+    const datasets = Object.entries(grouped).map(([key, rows]) => {
+      const [country, type] = key.split('|||');
+      // Map to full date domain, gaps as null
+      const mapByDate = new Map(rows.map(r => [r.date, usdFromRow(r)]));
+      const series = labels.map(dt => mapByDate.get(dt) ?? null);
+      return {
+        label: `${country} • ${type}`,
+        data: series,
+        tension: 0.25,
+        borderColor: countryColor[country],
+        borderWidth: 2,
+        borderDash: type === 'soy' ? [6, 4] : [],
+        spanGaps: false,
+        pointRadius: 0
+      };
+    });
+
+    // Draw
+    if (chart) chart.destroy();
+    const ctx = $('chart').getContext('2d');
+    chart = new Chart(ctx, {
+      type: 'line',
+      data: { labels, datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        interaction: { mode: 'nearest', intersect: false },
+        elements: { point: { radius: 0 } },
+        plugins: {
+          legend: { display: true, position: 'top' },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => {
+                const v = ctx.parsed.y;
+                return (v == null || Number.isNaN(v)) ? '—' : `${ctx.dataset.label}: $${v.toFixed(2)} USD/kg`;
+              }
+            }
+          },
+          decimation: { enabled: true, algorithm: 'lttb', samples: 600 }
+        },
+        scales: {
+          x: { ticks: { maxTicksLimit: 10 } },
+          y: { min: 0, beginAtZero: true, ticks: { maxTicksLimit: 6 } }
+        },
+        devicePixelRatio: 1
+      }
+    });
+  }
+
+  function render(){
+    syncControlsVisibility();
+    if (selView.value === 'all') {
+      renderAll();
+    } else {
+      renderSingle();
+    }
+  }
+
+  // Events
+  ['change'].forEach(evt => {
+    selView.addEventListener(evt, render);
+    selCountry.addEventListener(evt, render);
+    selCommodity.addEventListener(evt, render);
+  });
+
+  // Initial paint
   render();
 }
 

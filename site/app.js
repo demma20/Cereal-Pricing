@@ -2,221 +2,201 @@ async function load() {
   const res = await fetch('../data/latest.json', { cache: 'no-store' });
   const data = await res.json();
 
+  // Helpers
   const $ = id => document.getElementById(id);
   const uniq = arr => [...new Set(arr)].sort();
-  const by = (arr, fn) => arr.reduce((m, x) => ((m[fn(x)] ??= []).push(x), m), {});
+  const parseDate = s => new Date(s);
 
-  // --- DOM refs
-  const selView = $('view');
-  const selCountry = $('country');
-  const selCommodity = $('commodity');
+  // Sets & defaults
+  const countries = uniq(data.map(d => d.country).filter(Boolean));
+  const commodities = uniq(data.map(d => d.commodity).filter(Boolean));
 
-  // --- Normalize commodities into two buckets for styling (chicken/soy)
-  const normCommodity = c => {
-    if (!c) return c;
-    const s = String(c).toLowerCase();
-    if (s.includes('soy')) return 'soy';
-    if (s.includes('chicken')) return 'chicken';
-    return c; // fallback (shows as-is in single view)
-  };
-
-  // --- Lists for selects
-  const countries = uniq(data.map(d => d.country));
-  const commodities = uniq(data.map(d => normCommodity(d.commodity)));
-
-  // --- Formatters
+  // Formatters
   const fmtUSD = v => (v == null || Number.isNaN(v) ? "—" : `$${v.toFixed(2)} USD/kg`);
   const fmtINR = v => (v == null || Number.isNaN(v) ? "—" : `₹${Math.round(v).toLocaleString("en-IN")} INR/kg`);
 
-  // --- Populate selects
+  // Populate selects
   function fill(el, items){ el.innerHTML = items.map(x=>`<option value="${x}">${x}</option>`).join(''); }
-  fill(selCountry, countries);
-  fill(selCommodity, commodities);
+  fill($('country'), countries);
+  fill($('commodity'), commodities);
 
-  selCountry.value = countries.includes('United States') ? 'United States' : countries[0];
-  selCommodity.value = commodities.includes('soy') ? 'soy' : commodities[0];
-  selView.value = 'single'; // default
+  // Sensible defaults
+  $('view').value = 'single';
+  $('country').value = countries.includes('United States') ? 'United States' : countries[0];
+  $('commodity').value = commodities.includes('soy') ? 'soy' : commodities[0];
 
-  // --- Chart state
-  let chart;
-
-  // --- Helpers
-  const usdFromRow = r => {
-    if (r.usd_per_kg != null) return r.usd_per_kg;
-    if (r.price_per_kg != null && r.fx_rate_to_usd != null) return r.price_per_kg * r.fx_rate_to_usd;
-    return null;
-  };
-
-  const allDates = uniq(data.map(d => d.date)).sort((a,b)=> new Date(a) - new Date(b));
-
-  // Color palette (cycled per country)
+  // Color per country (auto-assign if new countries appear)
   const palette = [
-    '#2563eb', '#16a34a', '#dc2626', '#7c3aed', '#059669',
-    '#d97706', '#0ea5e9', '#f43f5e', '#065f46', '#9ca3af'
+    '#E54B4B', '#3B82F6', '#22C55E', '#F59E0B',
+    '#A855F7', '#EF4444', '#06B6D4', '#84CC16',
+    '#F97316', '#10B981'
   ];
   const countryColor = {};
-  countries.forEach((c, i) => countryColor[c] = palette[i % palette.length]);
+  countries.forEach((c,i)=> countryColor[c] = palette[i % palette.length]);
 
-  function syncControlsVisibility(){
-    const all = selView.value === 'all';
-    selCountry.classList.toggle('hidden', all);
-    selCommodity.classList.toggle('hidden', all);
+  // Compute USD from a row, safely
+  const usdFromRow = r => {
+    const v = r?.usd_per_kg ?? (
+      (r?.price_per_kg != null && r?.fx_rate_to_usd != null)
+        ? r.price_per_kg * r.fx_rate_to_usd
+        : null
+    );
+    return Number.isFinite(v) ? v : null; // Chart.js skips nulls (not NaNs)
+  };
+
+  // Global chart handle
+  let chart;
+
+  // Master set of all dates (strings), sorted
+  const allDates = uniq(data.map(d => d.date)).sort((a,b)=> parseDate(a) - parseDate(b));
+
+  // Build a dataset for (country, commodity) aligned to master labels
+  function buildSeries(country, commodity) {
+    const rows = data
+      .filter(d => d.country === country && d.commodity === commodity)
+      .sort((a,b)=> parseDate(a.date) - parseDate(b.date));
+
+    const byDate = new Map(rows.map(r => [r.date, usdFromRow(r)]));
+    const aligned = allDates.map(dt => byDate.get(dt) ?? null);
+    return aligned;
   }
 
-  function renderSingle(){
-    const c = selCountry.value;
-    const kRaw = selCommodity.value;
-    // In single view, match original raw commodity names if possible; also accept normalized.
-    const rows = data
-      .filter(d => d.country === c && (normCommodity(d.commodity) === kRaw))
-      .sort((a,b)=> new Date(a.date) - new Date(b.date));
-
-    if (!rows.length){
+  // Update the three info cards for single-series mode
+  function updateCardsSingle(rows) {
+    if (!rows.length) {
       $('latest').textContent = '—';
-      $('inr').textContent = '—';
-      $('source').textContent = '—';
-      if (chart) { chart.destroy(); chart = null; }
+      $('inr').textContent   = '—';
+      $('source').textContent= '—';
       return;
     }
-
-    const labels = rows.map(r => r.date);
-    const values = rows.map(usdFromRow);
     const last = rows[rows.length - 1];
-
-    // Cards
     const lastUSD = usdFromRow(last);
+
     $('latest').textContent = fmtUSD(lastUSD);
 
     const inrPerUsd = last.fx_inr_per_usd ?? (last.fx_usd_per_inr ? 1 / last.fx_usd_per_inr : null);
     const lastINR = last.inr_per_kg ?? (lastUSD != null && inrPerUsd != null ? lastUSD * inrPerUsd : null);
     $('inr').textContent = fmtINR(lastINR);
 
-    $('source').textContent = last ? [last.market_level, last.source].filter(Boolean).join(' • ') : '—';
-
-    // Draw
-    if (chart) chart.destroy();
-    const ctx = $('chart').getContext('2d');
-    chart = new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels,
-        datasets: [{
-          label: `${c} • ${kRaw} (USD/kg)`,
-          data: values,
-          tension: 0.25,
-          borderColor: countryColor[c],
-          borderWidth: 2,
-          borderDash: normCommodity(kRaw) === 'soy' ? [6, 4] : [],
-          pointRadius: 0
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        animation: false,
-        interaction: { mode: 'index', intersect: false },
-        elements: { point: { radius: 0 } },
-        plugins: {
-          legend: { display: true },
-          tooltip: {
-            callbacks: {
-              label: (ctx) => {
-                const v = ctx.parsed.y;
-                return (v == null || Number.isNaN(v)) ? '—' : `$${v.toFixed(2)} USD/kg`;
-              }
-            }
-          },
-          decimation: { enabled: true, algorithm: 'lttb', samples: 400 }
-        },
-        scales: {
-          x: { ticks: { maxTicksLimit: 8 } },
-          y: { min: 0, beginAtZero: true, ticks: { maxTicksLimit: 6 } }
-        },
-        devicePixelRatio: 1
-      }
-    });
+    $('source').textContent = last
+      ? [last.market_level, last.source].filter(Boolean).join(' • ')
+      : '—';
   }
 
-  function renderAll(){
-    // Cards: not meaningful for multi-series
+  // Cards for multi-series views
+  function updateCardsMulti(label) {
     $('latest').textContent = '—';
-    $('inr').textContent = '—';
-    $('source').textContent = 'Multiple series • USD/kg';
+    $('inr').textContent    = '—';
+    $('source').textContent = label; // e.g., "All series" / "Chicken only" / "Soy only"
+  }
 
-    // Build series for each (country, type=chicken|soy)
-    const grouped = by(
-      data.map(d => ({...d, type: normCommodity(d.commodity)}))
-          .filter(d => d.type === 'chicken' || d.type === 'soy'),
-      d => `${d.country}|||${d.type}`
+  // Render the chart based on the current "view" mode
+  function render() {
+    const view = $('view').value;
+    const c = $('country').value;
+    const k = $('commodity').value;
+
+    if (chart) { chart.destroy(); chart = null; }
+
+    // Single-series view (original UI)
+    if (view === 'single') {
+      const rows = data
+        .filter(d => d.country === c && d.commodity === k)
+        .sort((a,b)=> parseDate(a) - parseDate(b));
+
+      updateCardsSingle(rows);
+
+      const labels = rows.map(r => r.date);
+      const values = rows.map(usdFromRow);
+
+      const ctx = $('chart').getContext('2d');
+      chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            label: `${c} • ${k} (USD/kg)`,
+            data: values,
+            tension: 0.25,
+            borderColor: countryColor[c] || '#3B82F6',
+            borderWidth: 2,
+            borderDash: k === 'soy' ? [6,4] : [],
+            spanGaps: true,
+            pointRadius: 0
+          }]
+        },
+        options: baseOptions()
+      });
+      return;
+    }
+
+    // Multi-series views
+    const modeToTypes = {
+      all: ['chicken', 'soy'],
+      chicken: ['chicken'],
+      soy: ['soy']
+    };
+    const wantedTypes = modeToTypes[view] || ['chicken','soy'];
+
+    updateCardsMulti(
+      view === 'all' ? 'All series' : (view === 'chicken' ? 'Chicken only' : 'Soy only')
     );
 
-    const labels = allDates;
+    // Build datasets for each (country, type) combo
+    const datasets = [];
+    for (const country of countries) {
+      for (const type of wantedTypes) {
+        const series = buildSeries(country, type);
+        // Skip if the series is entirely null
+        if (series.every(v => v == null)) continue;
 
-    const datasets = Object.entries(grouped).map(([key, rows]) => {
-      const [country, type] = key.split('|||');
-      // Map to full date domain, gaps as null
-      const mapByDate = new Map(rows.map(r => [r.date, usdFromRow(r)]));
-      const series = labels.map(dt => mapByDate.get(dt) ?? null);
-      return {
-        label: `${country} • ${type}`,
-        data: series,
-        tension: 0.25,
-        borderColor: countryColor[country],
-        borderWidth: 2,
-        borderDash: type === 'soy' ? [6, 4] : [],
-        spanGaps: false,
-        pointRadius: 0
-      };
-    });
+        datasets.push({
+          label: `${country} • ${type}`,
+          data: series,
+          tension: 0.25,
+          borderColor: countryColor[country],
+          borderWidth: type === 'soy' ? 2.5 : 2,
+          borderDash: type === 'soy' ? [6,4] : [],
+          pointRadius: 0,
+          spanGaps: true
+        });
+      }
+    }
 
-    // Draw
-    if (chart) chart.destroy();
     const ctx = $('chart').getContext('2d');
     chart = new Chart(ctx, {
       type: 'line',
-      data: { labels, datasets },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        animation: false,
-        interaction: { mode: 'nearest', intersect: false },
-        elements: { point: { radius: 0 } },
-        plugins: {
-          legend: { display: true, position: 'top' },
-          tooltip: {
-            callbacks: {
-              label: (ctx) => {
-                const v = ctx.parsed.y;
-                return (v == null || Number.isNaN(v)) ? '—' : `${ctx.dataset.label}: $${v.toFixed(2)} USD/kg`;
-              }
-            }
-          },
-          decimation: { enabled: true, algorithm: 'lttb', samples: 600 }
-        },
-        scales: {
-          x: { ticks: { maxTicksLimit: 10 } },
-          y: { min: 0, beginAtZero: true, ticks: { maxTicksLimit: 6 } }
-        },
-        devicePixelRatio: 1
-      }
+      data: { labels: allDates, datasets },
+      options: baseOptions()
     });
   }
 
-  function render(){
-    syncControlsVisibility();
-    if (selView.value === 'all') {
-      renderAll();
-    } else {
-      renderSingle();
-    }
+  // Shared chart options (y starts at 0, nice ticks, decimation, etc.)
+  function baseOptions(){
+    return {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      interaction: { mode: 'index', intersect: false },
+      elements: { point: { radius: 0 } },
+      plugins: {
+        legend: { display: true },
+        decimation: { enabled: true, algorithm: 'lttb', samples: 200 }
+      },
+      scales: {
+        x: { ticks: { maxTicksLimit: 8 } },
+        y: {
+          min: 0,
+          beginAtZero: true,
+          ticks: { maxTicksLimit: 6 }
+        }
+      },
+      devicePixelRatio: 1
+    };
   }
 
   // Events
-  ['change'].forEach(evt => {
-    selView.addEventListener(evt, render);
-    selCountry.addEventListener(evt, render);
-    selCommodity.addEventListener(evt, render);
-  });
+  ['view','country','commodity'].forEach(id => $(id).addEventListener('change', render));
 
   // Initial paint
   render();

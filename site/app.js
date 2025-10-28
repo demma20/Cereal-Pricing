@@ -69,7 +69,10 @@ async function load() {
     const ctx = $('chart').getContext('2d');
     chart = new Chart(ctx, {
       type: 'line',
-      data: { labels, datasets: [{ label: `${c} • ${k} (USD/kg)`, data: values, tension: 0.25 }] },
+      data: {
+        labels,
+        datasets: [{ label: `${c} • ${k} (USD/kg)`, data: values, tension: 0.25 }]
+      },
       options: {
         responsive: true,
         maintainAspectRatio: false,
@@ -80,7 +83,16 @@ async function load() {
           legend: { display: true },
           decimation: { enabled: true, algorithm: 'lttb', samples: 200 }
         },
-        scales: { x: { ticks: { maxTicksLimit: 8 } }, y: { ticks: { maxTicksLimit: 6 } } },
+        scales: {
+          x: { ticks: { maxTicksLimit: 8 } },
+          y: {
+            min: 0,              // 👈 start at 0
+            beginAtZero: true,   // 👈 keep baseline at 0
+            ticks: { maxTicksLimit: 6 }
+          }
+          // If you ever add a 2nd axis:
+          // y1: { min: 0, beginAtZero: true }
+        },
         devicePixelRatio: 1
       }
     });

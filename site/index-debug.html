@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agri Prices Dashboard (Debug)</title>
+
+  <!-- Styles -->
+  <style>
+    :root { --muted:#6b7280; --border:#e5e7eb; }
+    * { box-sizing: border-box; }
+    body { font-family: system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif; margin: 0; color: #0f172a; background: #f9fafb; }
+    .container { max-width: 1100px; margin: 0 auto; padding: 2rem 1rem 4rem; }
+    header { display:flex; align-items:baseline; justify-content:space-between; gap:1rem; margin-bottom:1rem; }
+    h1 { font-size: clamp(28px, 4vw, 42px); line-height: 1; margin: 0 0 .75rem; }
+    h2 { font-size: 1.5rem; margin: 2rem 0 1rem; }
+    .filters { display:flex; gap:.5rem; flex-wrap:wrap; }
+    select { padding:.75rem 1rem; border-radius:.75rem; border:1px solid var(--border); background:#fff; }
+    .cards { display:grid; grid-template-columns: repeat(3, 1fr); gap:.75rem; margin:1rem 0 1.25rem; }
+    .card { padding:1rem; border:1px solid var(--border); border-radius:1rem; background:#fff; }
+    .muted { color: var(--muted); font-size:.9rem; }
+    .headline { font-weight: 700; font-size: clamp(18px, 3vw, 22px); }
+    .chart-wrap { height: 360px; margin-top:1rem; }
+    .chart-wrap canvas { width: 100%; height: 100%; display:block; }
+    .debug { background: #fffbeb; border: 2px solid #f59e0b; padding: 1rem; border-radius: .5rem; margin: 1rem 0; }
+    .debug h3 { margin: 0 0 .5rem; color: #d97706; }
+    .debug pre { background: #fff; padding: .5rem; border-radius: .25rem; overflow: auto; max-height: 300px; font-size: .85rem; }
+    .success { background: #d1fae5; border-color: #10b981; }
+    .success h3 { color: #059669; }
+    .error { background: #fee2e2; border-color: #ef4444; }
+    .error h3 { color: #dc2626; }
+    @media (max-width: 900px) {
+      .cards { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Agri Prices (Debug Mode)</h1>
+      <div class="filters">
+        <select id="view">
+          <option value="chicken">Chicken only</option>
+          <option value="soy">Soy only</option>
+          <option value="both">Chicken + Soy</option>
+        </select>
+        <select id="countrySelect">
+          <option value="">All countries</option>
+        </select>
+        <select id="metricSelect">
+          <option value="">All metrics</option>
+        </select>
+      </div>
+    </header>
+
+    <!-- Debug info -->
+    <div id="debugInfo" class="debug">
+      <h3>🔍 Loading data...</h3>
+    </div>
+
+    <!-- Headline cards -->
+    <div class="cards">
+      <div class="card">
+        <div class="muted">Headline price (per kg)</div>
+        <div class="headline" id="latest">—</div>
+      </div>
+      <div class="card">
+        <div class="muted">INR per kg</div>
+        <div class="headline" id="inr">—</div>
+      </div>
+      <div class="card">
+        <div class="muted">Market level / Source</div>
+        <div class="headline" id="source">—</div>
+      </div>
+    </div>
+
+    <!-- Charts -->
+    <div class="card chart-wrap">
+      <canvas id="chickenChart"></canvas>
+    </div>
+    <div class="card chart-wrap">
+      <canvas id="soyChart"></canvas>
+    </div>
+
+    <h2>Raw Data Preview</h2>
+    <div class="card">
+      <pre id="dataPreview" style="max-height: 400px; overflow: auto;">Loading...</pre>
+    </div>
+  </div>
+
+  <!-- App -->
+  <script type="module">
+    // ------- tiny loader to guarantee libs are ready -------
+    const loadScript = (src) => new Promise((res, rej) => {
+      const s = document.createElement('script');
+      s.src = src; s.defer = true;
+      s.onload = res; s.onerror = () => rej(new Error('Failed to load ' + src));
+      document.head.appendChild(s);
+    });
+
+    function setDebug(msg, type = 'info') {
+      const el = document.getElementById('debugInfo');
+      el.className = `debug ${type}`;
+      el.innerHTML = `<h3>${type === 'success' ? '✅' : type === 'error' ? '❌' : '🔍'} ${msg}</h3>`;
+    }
+
+    function addDebugDetail(html) {
+      const el = document.getElementById('debugInfo');
+      el.innerHTML += html;
+    }
+
+    try {
+      setDebug('Loading Chart.js libraries...');
+      await loadScript("https://cdn.jsdelivr.net/npm/chart.js@4");
+      await loadScript("https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3");
+      setDebug('Libraries loaded! Fetching data...', 'success');
+    } catch (e) {
+      setDebug('Failed to load Chart.js: ' + e.message, 'error');
+      throw e;
+    }
+
+    const $ = (id) => document.getElementById(id);
+    const fmt = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
+
+    // Stable color per label
+    const colorFor = (key) => {
+      let h = 0; for (let i=0;i<key.length;i++) h = (h*31 + key.charCodeAt(i)) >>> 0;
+      return `hsl(${h % 360} 70% 45%)`;
+    };
+
+    // ---------- Load & normalize data ----------
+    let raw = [];
+    const dataPath = "../data/latest.json";
+    
+    setDebug(`Fetching from: ${dataPath}`);
+    
+    try {
+      const res = await fetch(dataPath, { cache: "no-store" });
+      if (!res.ok) {
+        setDebug(`HTTP Error ${res.status} when fetching ${dataPath}`, 'error');
+        addDebugDetail(`<p>Make sure:</p><ul>
+          <li>The file exists at <code>${dataPath}</code></li>
+          <li>You're running this through a web server (not file://)</li>
+          <li>The path is correct relative to your HTML file</li>
+        </ul>`);
+        throw new Error("HTTP " + res.status);
+      }
+      
+      const text = await res.text();
+      setDebug(`Fetched ${text.length} characters. Parsing JSON...`);
+      
+      raw = JSON.parse(text);
+      
+      if (!Array.isArray(raw)) {
+        setDebug('Data is not an array!', 'error');
+        addDebugDetail(`<pre>${JSON.stringify(raw, null, 2).slice(0, 500)}</pre>`);
+        raw = [raw];
+      }
+      
+      setDebug(`Successfully loaded ${raw.length} records!`, 'success');
+      
+      // Show sample record
+      if (raw.length > 0) {
+        addDebugDetail(`<p><strong>Sample record:</strong></p><pre>${JSON.stringify(raw[0], null, 2)}</pre>`);
+      }
+      
+    } catch (e) {
+      setDebug(`Error loading data: ${e.message}`, 'error');
+      console.error(e);
+      addDebugDetail(`<p>Full error:</p><pre>${e.stack}</pre>`);
+      raw = [];
+    }
+
+    // Show raw data
+    $("dataPreview").textContent = JSON.stringify(raw, null, 2);
+
+    // Normalize to a uniform shape the charts can use
+    const rows = raw
+      .filter(r => {
+        if (!r) return false;
+        if (!r.date) {
+          console.warn('Record missing date:', r);
+          return false;
+        }
+        if ((r.usd_per_kg ?? r.price_per_kg) == null) {
+          console.warn('Record missing price:', r);
+          return false;
+        }
+        return true;
+      })
+      .map(r => ({
+        date: r.date,
+        country: r.country ?? "Unknown",
+        source: r.source ?? "—",
+        market: r.market_level ?? r.product_form ?? "",
+        metric: r.commodity ?? "Unknown",
+        usd: Number(r.usd_per_kg ?? r.price_per_kg),
+        inr: (r.inr_per_kg != null) ? Number(r.inr_per_kg) : null
+      }))
+      .sort((a,b) => a.date.localeCompare(b.date));
+
+    if (rows.length === 0) {
+      setDebug(`No valid records after filtering! Check data format.`, 'error');
+      addDebugDetail(`<p>Expected fields: <code>date</code>, <code>usd_per_kg</code> or <code>price_per_kg</code>, <code>commodity</code></p>`);
+    } else {
+      addDebugDetail(`<p>✅ Successfully normalized ${rows.length} records for charting</p>`);
+    }
+
+    // ---------- Populate filters ----------
+    const countries = [...new Set(rows.map(r => r.country))].sort();
+    const metrics   = [...new Set(rows.map(r => r.metric))].sort();
+
+    addDebugDetail(`<p><strong>Countries:</strong> ${countries.join(', ') || 'none'}</p>`);
+    addDebugDetail(`<p><strong>Metrics:</strong> ${metrics.join(', ') || 'none'}</p>`);
+
+    for (const c of countries) {
+      const o = document.createElement("option");
+      o.value = o.textContent = c; $("countrySelect").appendChild(o);
+    }
+    for (const m of metrics) {
+      const o = document.createElement("option");
+      o.value = o.textContent = m; $("metricSelect").appendChild(o);
+    }
+
+    // ---------- Chart helpers ----------
+    function makeDatasets(seriesRows, labelFn) {
+      const groups = new Map();
+      for (const r of seriesRows) {
+        const k = labelFn(r);
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k).push({ x: r.date, y: r.usd });
+      }
+      return [...groups.entries()].map(([label, data]) => {
+        const small = data.length < 2;
+        return {
+          label,
+          data,
+          borderColor: colorFor(label),
+          backgroundColor: colorFor(label),
+          tension: 0.2,
+          showLine: true,
+          spanGaps: true,
+          pointRadius: small ? 3 : 0,
+          pointHoverRadius: small ? 6 : 3,
+          hitRadius: 6,
+        };
+      });
+    }
+
+    function buildChart(canvasId, seriesRows, title) {
+      const node = $(canvasId);
+      if (!node) return null;
+      if (node.__chart) { node.__chart.destroy(); node.__chart = null; }
+
+      const chart = new Chart(node.getContext("2d"), {
+        type: "line",
+        data: { datasets: makeDatasets(seriesRows, r => `${r.country} • ${r.metric}`) },
+        options: {
+          parsing: false,
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            title: { display: !!title, text: title },
+            legend: { display: true, position: "bottom" },
+            tooltip: {
+              callbacks: {
+                label: (ctx) => `${ctx.dataset.label}: ${fmt.format(ctx.parsed.y)} USD/kg`
+              }
+            }
+          },
+          scales: {
+            x: { type: "time", time: { unit: "month" } },
+            y: { ticks: { callback: (v) => fmt.format(v) } }
+          }
+        }
+      });
+      node.__chart = chart;
+      return chart;
+    }
+
+    function applyFilters() {
+      const view = ($("view").value || "chicken").toLowerCase();
+      const cc   = $("countrySelect").value || "";
+      const mm   = $("metricSelect").value || "";
+
+      const bySel = rows.filter(r =>
+        (!cc || r.country === cc) &&
+        (!mm || r.metric === mm)
+      );
+
+      const chickenRows = bySel.filter(r => /chicken/i.test(r.metric));
+      const soyRows     = bySel.filter(r => /soy/i.test(r.metric));
+
+      console.log(`View: ${view}, Chicken rows: ${chickenRows.length}, Soy rows: ${soyRows.length}`);
+
+      // Toggle visibility
+      const chickenWrap = $("chickenChart").closest(".chart-wrap");
+      const soyWrap     = $("soyChart").closest(".chart-wrap");
+      chickenWrap.style.display = (view === "soy") ? "none" : "";
+      soyWrap.style.display     = (view === "chicken") ? "none" : "";
+
+      // Build charts
+      buildChart("chickenChart", chickenRows, "Chicken (USD/kg)");
+      buildChart("soyChart",     soyRows,     "Soy (USD/kg)");
+
+      // Headline cards
+      const pool = (view === "chicken") ? chickenRows
+                 : (view === "soy") ? soyRows
+                 : [...bySel];
+
+      const latest = pool.sort((a,b) => a.date.localeCompare(b.date)).at(-1);
+      if (latest) {
+        $("latest").textContent = `${fmt.format(latest.usd)} USD/kg`;
+        $("inr").textContent    = (latest.inr != null) ? `${fmt.format(latest.inr)} INR/kg` : "—";
+        $("source").textContent = [latest.market, latest.source, latest.country, latest.metric]
+          .filter(Boolean).join(" • ");
+      } else {
+        $("latest").textContent = "—";
+        $("inr").textContent    = "—";
+        $("source").textContent = "—";
+      }
+    }
+
+    // ---------- Hook up UI ----------
+    for (const id of ["view","countrySelect","metricSelect"]) {
+      $(id).addEventListener("change", applyFilters);
+    }
+
+    // Initial paint
+    if (rows.length > 0) {
+      applyFilters();
+    }
+  </script>
+</body>
+</html>

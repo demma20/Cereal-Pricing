@@ -20,31 +20,32 @@ async function load() {
 
   // Normalize a row to a chicken "kind"
   function normalizeKind(row) {
-    const c = String(row?.commodity || '').toLowerCase();
+    const c  = String(row?.commodity || '').toLowerCase();
+    const pf = String(row?.product_form || '').toLowerCase();
+    const text = `${c} ${pf}`; // check both together
   
     // soy stays soy
-    if (c.includes('soy')) return 'soy';
+    if (text.includes('soy')) return 'soy';
   
-    // ---- chicken subtypes (return distinct kinds) ----
-    // breast (EU "breast fillet", US "B/S", etc.)
+    // --- chicken breast (EU "breast fillet", US "B/S", etc.) ---
     if (
-      c.includes('breast') ||
-      c.includes('fillet') ||
-      c.includes('fillets') ||
-      c.includes('b/s') ||
-      c.includes('breast fillet')
+      text.includes('breast') ||
+      text.includes('breast -') ||               // "Breast - B/S"
+      text.includes('fillet') || text.includes('fillets') ||
+      text.includes('b/s') || text.includes('boneless skinless')
     ) return 'chicken breast';
   
-    // thigh (map any "thigh" or "leg/legs" feed to thigh)
-    if (c.includes('thigh')) return 'chicken thigh';
-    if (c.includes('leg'))   return 'chicken thigh';
+    // --- chicken thigh (map any "thigh" or "leg/legs" to thigh) ---
+    if (text.includes('thigh')) return 'chicken thigh';
+    if (text.includes('leg'))   return 'chicken thigh'; // EU weekly "legs" → thigh
   
-    // generic chicken (whole/unspecified)
-    if (c.includes('chicken') || c.includes('broiler') || c.includes('poultry')) return 'chicken';
+    // --- generic chicken (whole/unspecified) ---
+    if (text.includes('chicken') || text.includes('broiler') || text.includes('poultry')) return 'chicken';
   
-    // fallback: leave as-is for single view
+    // fallback (for single-series exact selection)
     return row?.commodity || '';
   }
+
 
 
   // Precompute kind on each row (don’t mutate the original object structure too much)

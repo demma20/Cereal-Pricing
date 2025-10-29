@@ -141,17 +141,27 @@
     function makeDatasets(seriesRows, labelFn) {
       const groups = new Map();
       for (const r of seriesRows) {
-        const k = labelFn(r); // e.g., "India • chicken breast"
+        const k = labelFn(r); // e.g., "EU • soy"
         if (!groups.has(k)) groups.set(k, []);
         groups.get(k).push({ x: r.date, y: r.usd });
       }
-      return [...groups.entries()].map(([label, data]) => ({
-        label, data,
-        borderColor: colorFor(label),
-        backgroundColor: colorFor(label),
-        tension: 0.2, pointRadius: 0
-      }));
+      return [...groups.entries()].map(([label, data]) => {
+        const small = data.length < 2; // single-point (or very small) series
+        return {
+          label,
+          data,
+          borderColor: colorFor(label),
+          backgroundColor: colorFor(label),
+          tension: 0.2,
+          showLine: true,                 // draw the stroke even for few points
+          spanGaps: true,
+          pointRadius: small ? 3 : 0,     // make single points visible
+          pointHoverRadius: small ? 6 : 3,
+          hitRadius: 6,
+        };
+      });
     }
+
 
     function buildChart(canvasId, seriesRows, title) {
       const node = $(canvasId);

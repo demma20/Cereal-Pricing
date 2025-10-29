@@ -1,127 +1,143 @@
-// app.js
-// Usage: node app.js input.txt output.txt
-// Input: text file where each line is (ideally) a JSON object; some lines may be partial/broken.
-// Output: a .txt file containing a JSON array, one object per line, commas between, wrapped in [].
+// app.js (browser)
+// Expects data/latest.json = [ { date, country, source, metric, unit, value }, ... ]
 
-const fs = require('fs');
-const readline = require('readline');
-const { once } = require('events');
+(() => {
+  const els = {
+    country: document.getElementById('country'),
+    commodity: document.getElementById('commodity'),
+    latest: document.getElementById('latest'),
+    inr: document.getElementById('inr'),
+    source: document.getElementById('source'),
+    canvas: document.getElementById('chart'),
+  };
 
-if (process.argv.length < 4) {
-  console.error('Usage: node app.js <input.txt> <output.txt>');
-  process.exit(1);
-}
+  let DATA = [];
+  let chart;
 
-const [, , inPath, outPath] = process.argv;
+  const nf = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
 
-function normalizeRecord(obj) {
-  const out = { ...obj };
-
-  // Required fields
-  const required = ['date', 'country', 'source', 'metric', 'unit', 'value'];
-  for (const k of required) {
-    if (!(k in out)) return null;
+  function ensureChart() {
+    if (chart) return chart;
+    if (!window.Chart) { console.error('Chart.js not loaded'); return null; }
+    const ctx = els.canvas.getContext('2d');
+    chart = new Chart(ctx, {
+      type: 'line',
+      data: { labels: [], datasets: [{ label: 'Price per kg', data: [], tension: 0.25, pointRadius: 0 }] },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { intersect: false, mode: 'index' } },
+        scales: { x: { ticks: { autoSkip: true, maxRotation: 0 } }, y: { beginAtZero: false } }
+      }
+    });
+    return chart;
   }
 
-  // Date -> YYYY-MM-DD
-  const d = new Date(out.date);
-  if (Number.isNaN(d.getTime())) return null;
-  out.date = d.toISOString().slice(0, 10);
-
-  // Strings -> trimmed
-  for (const k of ['country', 'source', 'metric', 'unit']) {
-    if (typeof out[k] !== 'string') return null;
-    out[k] = out[k].trim();
-    if (!out[k]) return null;
+  function uniqSorted(arr) {
+    return [...new Set(arr.filter(v => v != null && v !== ''))]
+      .sort((a,b)=> String(a).localeCompare(String(b)));
   }
 
-  // Value -> number
-  if (typeof out.value === 'string') {
-    const v = Number(out.value.replace(/[, ]+/g, ''));
+  function populateSelect(el, values, allLabel) {
+    el.innerHTML = '';
+    const optAll = document.createElement('option');
+    optAll.value = '';
+    optAll.textContent = allLabel;
+    el.appendChild(optAll);
+    values.forEach(v => {
+      const o = document.createElement('option');
+      o.value = v; o.textContent = v;
+      el.appendChild(o);
+    });
+  }
+
+  function normalizeRow(r) {
+    // required fields: date, country, source, metric (commodity), unit, value
+    if (!r) return null;
+    const { date, country, source, metric, unit, value } = r;
+    if (!date || !country || !metric || value == null) return null;
+
+    const d = new Date(date);
+    if (isNaN(d)) return null;
+
+    const v = typeof value === 'string' ? Number(value.replace(/[, ]+/g, '')) : Number(value);
     if (!Number.isFinite(v)) return null;
-    out.value = v;
-  } else if (!Number.isFinite(out.value)) {
-    return null;
+
+    return {
+      date: d,
+      country: String(country).trim(),
+      commodity: String(metric).trim(),   // metric == commodity
+      unit: unit ? String(unit).trim() : '',
+      source: source ? String(source).trim() : '',
+      value: v
+    };
   }
 
-  return out;
-}
+  function refresh() {
+    const selCountry = els.country.value;
+    const selCommodity = els.commodity.value;
 
-function dedupeKey(rec) {
-  return [
-    rec.date,
-    rec.country.toLowerCase(),
-    rec.source.toLowerCase(),
-    rec.metric.toLowerCase(),
-    rec.unit.toLowerCase(),
-  ].join('|');
-}
+    let rows = DATA;
+    if (selCountry) rows = rows.filter(r => r.country === selCountry);
+    if (selCommodity) rows = rows.filter(r => r.commodity === selCommodity);
 
-async function run() {
-  const rl = readline.createInterface({
-    input: fs.createReadStream(inPath, { encoding: 'utf8' }),
-    crlfDelay: Infinity,
-  });
+    rows = rows.filter(r => r.date instanceof Date && !isNaN(r.date))
+               .sort((a,b)=> a.date - b.date);
 
-  const map = new Map(); // key -> record (last one wins)
-  let lineNum = 0;
-  let kept = 0,
-    skipped = 0;
+    const c = ensureChart();
+    if (c) {
+      c.data.labels = rows.map(r => r.date.toISOString().slice(0,10));
+      c.data.datasets[0].data = rows.map(r => r.value);
+      c.update();
+    }
 
-  rl.on('line', (line) => {
-    lineNum++;
-    const trimmed = line.trim();
-    if (!trimmed) return;
+    // KPIs
+    if (!rows.length) {
+      els.latest.textContent = '—';
+      els.inr.textContent = '—';   // only show INR if your data has it; else leave em-dash
+      els.source.textContent = '—';
+      return;
+    }
+    const last = rows[rows.length - 1];
+    els.latest.textContent = nf.format(last.value) + (last.unit ? ` ${last.unit}` : '');
+    els.inr.textContent = '—'; // no INR column in this schema; remove or repurpose if needed
+    els.source.textContent = last.source || '—';
+  }
 
-    // Strip trailing commas (common when pasting array entries line-by-line)
-    let maybe = trimmed.replace(/,+\s*$/, '');
-
-    // Ignore array wrappers if the input accidentally includes them
-    if (maybe === '[' || maybe === ']') return;
-
+  async function boot() {
     try {
-      const obj = JSON.parse(maybe);
-      const norm = normalizeRecord(obj);
-      if (!norm) {
-        skipped++;
+      const res = await fetch('data/latest.json', { cache: 'no-store' });
+      if (!res.ok) throw new Error(`Failed to load data/latest.json (${res.status})`);
+      const raw = await res.json();
+      if (!Array.isArray(raw) || !raw.length) throw new Error('latest.json is empty or not an array');
+
+      DATA = raw.map(normalizeRow).filter(Boolean);
+      if (!DATA.length) {
+        console.error('No valid rows after normalization. Check keys/values in latest.json');
         return;
       }
-      const key = dedupeKey(norm);
-      map.set(key, norm);
-      kept++;
-    } catch {
-      // Incomplete or junk line — skip it
-      skipped++;
+
+      // Build filters
+      const countries = uniqSorted(DATA.map(r => r.country));
+      const commodities = uniqSorted(DATA.map(r => r.commodity));
+      populateSelect(els.country, countries, 'All countries');
+      populateSelect(els.commodity, commodities, 'All commodities');
+
+      // Handlers
+      ['change','input'].forEach(ev => {
+        els.country.addEventListener(ev, refresh);
+        els.commodity.addEventListener(ev, refresh);
+      });
+
+      refresh();
+    } catch (e) {
+      console.error(e);
     }
-  });
-
-  await once(rl, 'close');
-
-  const records = Array.from(map.values()).sort((a, b) =>
-    a.date < b.date ? -1 : a.date > b.date ? 1 : 0
-  );
-
-  // Write as a JSON array with one object per line, commas between, wrapped in []
-  const fd = fs.openSync(outPath, 'w');
-  try {
-    fs.writeSync(fd, '[\n');
-    records.forEach((r, i) => {
-      const line = JSON.stringify(r);
-      const comma = i === records.length - 1 ? '' : ',';
-      fs.writeSync(fd, line + comma + '\n');
-    });
-    fs.writeSync(fd, ']\n');
-  } finally {
-    fs.closeSync(fd);
   }
 
-  console.log(
-    `Done. Read lines: ${lineNum}, Parsed: ${kept + skipped}, Kept valid: ${kept}, Unique after dedupe: ${records.length}, Skipped: ${skipped}`
-  );
-  console.log(`Wrote: ${outPath}`);
-}
-
-run().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot);
+  } else {
+    boot();
+  }
+})();

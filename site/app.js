@@ -1,7 +1,3 @@
-// app.js
-// Usage: node app.js input.txt output.txt
-// Input: text file where each line is (ideally) a JSON object; some lines may be partial/broken.
-// Output: a .txt file containing a JSON array, one object per line, commas between, wrapped in [].
 
 const fs = require('fs');
 const readline = require('readline');

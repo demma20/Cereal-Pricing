@@ -1,166 +1,127 @@
-// site/app.js
-// Front-end for Agri Prices. Data file is at ../data/latest.json
+// app.js
+// Usage: node app.js input.txt output.txt
+// Input: text file where each line is (ideally) a JSON object; some lines may be partial/broken.
+// Output: a .txt file containing a JSON array, one object per line, commas between, wrapped in [].
 
-(function () {
-  /** @type {{date:string,country:string,source:string,metric:string,unit:string,value:number}[]} */
-  let rows = [];
-  let chart;
-  let els;
+const fs = require('fs');
+const readline = require('readline');
+const { once } = require('events');
 
-  const uniq = (arr) => [...new Set(arr)];
-  const fmt = (n) =>
-    n >= 1000
-      ? n.toLocaleString(undefined, { maximumFractionDigits: 0 })
-      : n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+if (process.argv.length < 4) {
+  console.error('Usage: node app.js <input.txt> <output.txt>');
+  process.exit(1);
+}
 
-  function setCards(series) {
-    if (!series.length) {
-      els.latest.textContent = '';
-      els.inr.textContent = '';
-      els.source.textContent = '';
-      return;
-    }
-    const last = series[series.length - 1];
-    els.latest.textContent = `${fmt(last.value)} ${last.unit}`;
-    els.inr.textContent = /inr/i.test(last.unit) ? `${fmt(last.value)} INR/kg` : 'N/A';
-    els.source.textContent = `${last.source} — ${last.country}`;
+const [, , inPath, outPath] = process.argv;
+
+function normalizeRecord(obj) {
+  const out = { ...obj };
+
+  // Required fields
+  const required = ['date', 'country', 'source', 'metric', 'unit', 'value'];
+  for (const k of required) {
+    if (!(k in out)) return null;
   }
 
-  function buildOptions(values, selectEl, placeholder = 'All') {
-    selectEl.innerHTML = '';
-    const optAll = document.createElement('option');
-    optAll.value = '';
-    optAll.textContent = `All ${placeholder.toLowerCase()}s`;
-    selectEl.appendChild(optAll);
-    values.forEach((v) => {
-      const o = document.createElement('option');
-      o.value = v;
-      o.textContent = v;
-      selectEl.appendChild(o);
-    });
+  // Date -> YYYY-MM-DD
+  const d = new Date(out.date);
+  if (Number.isNaN(d.getTime())) return null;
+  out.date = d.toISOString().slice(0, 10);
+
+  // Strings -> trimmed
+  for (const k of ['country', 'source', 'metric', 'unit']) {
+    if (typeof out[k] !== 'string') return null;
+    out[k] = out[k].trim();
+    if (!out[k]) return null;
   }
 
-  function filterRows() {
-    const country = els.country.value;
-    const metric = els.metric.value;
-    const view = els.view.value;
-
-    return rows.filter((r) => {
-      if (country && r.country !== country) return false;
-      if (metric && r.metric !== metric) return false;
-      if (view === 'chicken' && !/chicken/i.test(r.metric)) return false;
-      if (view === 'soy' && !/soy/i.test(r.metric)) return false;
-      return true;
-    });
+  // Value -> number
+  if (typeof out.value === 'string') {
+    const v = Number(out.value.replace(/[, ]+/g, ''));
+    if (!Number.isFinite(v)) return null;
+    out.value = v;
+  } else if (!Number.isFinite(out.value)) {
+    return null;
   }
 
-  function groupByMetricCountry(data) {
-    const map = new Map();
-    data.forEach((r) => {
-      const key = `${r.metric} | ${r.country}`;
-      if (!map.has(key)) map.set(key, []);
-      map.get(key).push(r);
-    });
-    for (const arr of map.values()) arr.sort((a, b) => (a.date < b.date ? -1 : 1));
-    return map;
-  }
+  return out;
+}
 
-  function ensureChart() {
-    if (chart) return chart;
-    chart = new Chart(els.chart.getContext('2d'), {
-      type: 'line',
-      data: { datasets: [] },
-      options: {
-        responsive: true,
-        parsing: false,
-        animation: false,
-        scales: {
-          x: { type: 'time', time: { unit: 'month' } },
-          y: { beginAtZero: false, ticks: { callback: (v) => fmt(v) } },
-        },
-        plugins: {
-          legend: { display: true },
-          tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${fmt(ctx.parsed.y)}` } },
-        },
-      },
-    });
-    return chart;
-  }
+function dedupeKey(rec) {
+  return [
+    rec.date,
+    rec.country.toLowerCase(),
+    rec.source.toLowerCase(),
+    rec.metric.toLowerCase(),
+    rec.unit.toLowerCase(),
+  ].join('|');
+}
 
-  function render() {
-    const filtered = filterRows();
-
-    // Update headline cards from the first matching series
-    const firstSeries = (() => {
-      const groups = groupByMetricCountry(filtered);
-      const it = groups.entries().next();
-      return it.done ? [] : it.value[1];
-    })();
-    setCards(firstSeries);
-
-    const c = ensureChart();
-    c.data.datasets = [];
-
-    if (!filtered.length) {
-      c.update();
-      return;
-    }
-
-    const groups = groupByMetricCountry(filtered);
-    for (const [label, arr] of groups) {
-      c.data.datasets.push({
-        label,
-        data: arr.map((r) => ({ x: r.date, y: r.value })),
-        borderWidth: 2,
-        pointRadius: 0,
-      });
-    }
-    c.update();
-  }
-
-  function wireUI() {
-    els.view.addEventListener('change', render);
-    els.country.addEventListener('change', render);
-    els.metric.addEventListener('change', render);
-  }
-
-  async function loadData() {
-    try {
-      const res = await fetch('../data/latest.json?cb=' + Date.now(), { cache: 'no-store' });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      rows = await res.json();
-    } catch (e) {
-      console.error('Failed to load ../data/latest.json:', e);
-      return;
-    }
-
-    // keep only well-formed records
-    rows = rows.filter((r) => r && r.date && r.country && r.metric && typeof r.value === 'number');
-
-    // normalize date to YYYY-MM-DD (adapter parses ISO)
-    rows.forEach((r) => (r.date = r.date.slice(0, 10)));
-
-    // fill selects
-    const countries = uniq(rows.map((r) => r.country)).sort();
-    const metrics = uniq(rows.map((r) => r.metric)).sort();
-    buildOptions(countries, els.country, 'country');
-    buildOptions(metrics, els.metric, 'metric');
-
-    render();
-  }
-
-  // Wait for DOM to exist before grabbing elements
-  window.addEventListener('DOMContentLoaded', () => {
-    els = {
-      view: document.getElementById('view'),
-      country: document.getElementById('countrySelect'),
-      metric: document.getElementById('metricSelect'),
-      latest: document.getElementById('latest'),
-      inr: document.getElementById('inr'),
-      source: document.getElementById('source'),
-      chart: document.getElementById('chart'),
-    };
-    wireUI();
-    loadData();
+async function run() {
+  const rl = readline.createInterface({
+    input: fs.createReadStream(inPath, { encoding: 'utf8' }),
+    crlfDelay: Infinity,
   });
-})();
+
+  const map = new Map(); // key -> record (last one wins)
+  let lineNum = 0;
+  let kept = 0,
+    skipped = 0;
+
+  rl.on('line', (line) => {
+    lineNum++;
+    const trimmed = line.trim();
+    if (!trimmed) return;
+
+    // Strip trailing commas (common when pasting array entries line-by-line)
+    let maybe = trimmed.replace(/,+\s*$/, '');
+
+    // Ignore array wrappers if the input accidentally includes them
+    if (maybe === '[' || maybe === ']') return;
+
+    try {
+      const obj = JSON.parse(maybe);
+      const norm = normalizeRecord(obj);
+      if (!norm) {
+        skipped++;
+        return;
+      }
+      const key = dedupeKey(norm);
+      map.set(key, norm);
+      kept++;
+    } catch {
+      // Incomplete or junk line — skip it
+      skipped++;
+    }
+  });
+
+  await once(rl, 'close');
+
+  const records = Array.from(map.values()).sort((a, b) =>
+    a.date < b.date ? -1 : a.date > b.date ? 1 : 0
+  );
+
+  // Write as a JSON array with one object per line, commas between, wrapped in []
+  const fd = fs.openSync(outPath, 'w');
+  try {
+    fs.writeSync(fd, '[\n');
+    records.forEach((r, i) => {
+      const line = JSON.stringify(r);
+      const comma = i === records.length - 1 ? '' : ',';
+      fs.writeSync(fd, line + comma + '\n');
+    });
+    fs.writeSync(fd, ']\n');
+  } finally {
+    fs.closeSync(fd);
+  }
+
+  console.log(
+    `Done. Read lines: ${lineNum}, Parsed: ${kept + skipped}, Kept valid: ${kept}, Unique after dedupe: ${records.length}, Skipped: ${skipped}`
+  );
+  console.log(`Wrote: ${outPath}`);
+}
+
+run().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

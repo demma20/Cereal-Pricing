@@ -122,15 +122,15 @@
 
   async function boot() {
     // 1) load
-    const res = await fetch('./data.json', { cache: 'no-store' });
+    const res = await fetch('./latest.json', { cache: 'no-store' });
     if (!res.ok) {
-      console.error('Failed to load data.json');
+      console.error('Failed to load latest.json');
       return;
     }
     RAW = await res.json();
 
     if (!Array.isArray(RAW) || RAW.length === 0) {
-      console.error('data.json is empty or not an array');
+      console.error('latest.json is empty or not an array');
       return;
     }
 

@@ -29,18 +29,18 @@ async function load() {
   
     // --- chicken breast ---
     if (
-      c.includes('breast') ||
+      c === 'chicken breast' ||
       text.includes('breast') ||
       text.includes('fillet') || text.includes('fillets') ||
       text.includes('b/s') || text.includes('boneless skinless')
     ) return 'chicken breast';
   
     // --- chicken thigh ---
-    if (c.includes('thigh') || text.includes('thigh')) return 'chicken thigh';
-    if (text.includes('leg')) return 'chicken thigh';
+    if (c === 'chicken thigh' || text.includes('thigh')) return 'chicken thigh';
+    if (text.includes('leg')) return 'chicken thigh'; // EU "legs" maps to thigh
   
     // --- generic chicken ---
-    if (text.includes('chicken') || text.includes('broiler') || text.includes('poultry')) return 'chicken';
+    if (c === 'chicken' || text.includes('chicken') || text.includes('broiler') || text.includes('poultry')) return 'chicken';
   
     return row?.commodity || '';
   }
@@ -66,19 +66,19 @@ async function load() {
   $('country').value = countries.includes('United States') ? 'United States' : countries[0];
   $('commodity').value = commodities.includes('soy') ? 'soy' : commodities[0];
 
-  // colors per country
+  // colors per country - fixed colors
   const countryColor = {
-    'United States': '#3B82F6',
-    'European Union': '#10B981',
-    'EU': '#10B981',
-    'Thailand': '#F59E0B'
+    'Thailand': '#22C55E',        // Green
+    'United States': '#F59E0B',   // Orange/Amber
+    'EU': '#3B82F6',             // Blue
+    'European Union': '#3B82F6'  // Blue
   };
 
   // line styles per normalized kind
   const kindStyle = {
     'chicken':        { dash: [],       width: 2.5 }, // solid
-    'chicken thigh':  { dash: [8,4],    width: 2   }, // dashed
-    'chicken breast': { dash: [3,3],    width: 2   }, // dotted
+    'chicken thigh':  { dash: [8,4],    width: 2.5 }, // dashed
+    'chicken breast': { dash: [3,3],    width: 2.5 }, // dotted
     'soy':            { dash: [10,5],   width: 2   }  // long dash
   };
 
@@ -86,11 +86,21 @@ async function load() {
   const allDates = uniq(data.map(d => d.date).filter(Boolean)).sort((a,b)=> toDate(a)-toDate(b));
 
   // build a series aligned to master dates for (country, normalized kind)
-  function buildSeries(country, kind) {
-    const rows = data
-      .filter(d => (d.country === country || d.country === 'EU') && d.__kind === kind)
-      .filter(d => country === 'EU' ? (d.country === 'EU' || d.country === 'European Union') : d.country === country)
-      .sort((a,b)=> toDate(a.date)-toDate(b.date));
+  function buildSeries(countryName, kind) {
+    // Handle EU/European Union naming
+    const rows = data.filter(d => {
+      // Match country (handle EU vs European Union)
+      const countryMatch = 
+        (countryName === 'EU' && (d.country === 'EU' || d.country === 'European Union')) ||
+        (countryName === 'European Union' && (d.country === 'EU' || d.country === 'European Union')) ||
+        d.country === countryName;
+      
+      // Match kind
+      const kindMatch = d.__kind === kind;
+      
+      return countryMatch && kindMatch;
+    }).sort((a,b)=> toDate(a.date)-toDate(b.date));
+    
     const map = new Map(rows.map(r => [r.date, usdFromRow(r)]));
     return allDates.map(dt => map.get(dt) ?? null);
   }
@@ -192,135 +202,72 @@ async function load() {
 
     // --- multi series for chicken view ---
     if (view === 'chicken') {
-      updateCardsMulti('Chicken comparison');
+      updateCardsMulti('Chicken only');
       const datasets = [];
       
-      // Thailand - only has generic "chicken"
+      // Thailand - generic chicken
       const thailandChicken = buildSeries('Thailand', 'chicken');
       if (thailandChicken.some(v => v != null)) {
         datasets.push({
           label: 'Thailand • chicken',
           data: thailandChicken,
           tension: 0.25,
-          borderColor: countryColor['Thailand'],
-          borderWidth: kindStyle['chicken'].width,
-          borderDash: kindStyle['chicken'].dash,
+          borderColor: '#22C55E', // Green
+          borderWidth: 2.5,
+          borderDash: [], // Solid
           pointRadius: 0,
           spanGaps: true
         });
       }
 
-      // United States - chicken breast and thigh
+      // United States - chicken breast
       const usBreast = buildSeries('United States', 'chicken breast');
       if (usBreast.some(v => v != null)) {
         datasets.push({
           label: 'United States • chicken breast',
           data: usBreast,
           tension: 0.25,
-          borderColor: countryColor['United States'],
-          borderWidth: kindStyle['chicken breast'].width,
-          borderDash: kindStyle['chicken breast'].dash,
+          borderColor: '#F59E0B', // Orange
+          borderWidth: 2.5,
+          borderDash: [3, 3], // Dotted
           pointRadius: 0,
           spanGaps: true
         });
       }
 
+      // United States - chicken thigh
       const usThigh = buildSeries('United States', 'chicken thigh');
       if (usThigh.some(v => v != null)) {
         datasets.push({
           label: 'United States • chicken thigh',
           data: usThigh,
           tension: 0.25,
-          borderColor: countryColor['United States'],
-          borderWidth: kindStyle['chicken thigh'].width,
-          borderDash: kindStyle['chicken thigh'].dash,
+          borderColor: '#F59E0B', // Orange
+          borderWidth: 2.5,
+          borderDash: [8, 4], // Dashed
           pointRadius: 0,
           spanGaps: true
         });
       }
 
-      // European Union - chicken breast and thigh
-      const euBreast = buildSeries('European Union', 'chicken breast');
+      // EU - chicken breast
+      const euBreast = buildSeries('EU', 'chicken breast');
       if (euBreast.some(v => v != null)) {
         datasets.push({
           label: 'EU • chicken breast',
           data: euBreast,
           tension: 0.25,
-          borderColor: countryColor['European Union'],
-          borderWidth: kindStyle['chicken breast'].width,
-          borderDash: kindStyle['chicken breast'].dash,
+          borderColor: '#3B82F6', // Blue
+          borderWidth: 2.5,
+          borderDash: [3, 3], // Dotted
           pointRadius: 0,
           spanGaps: true
         });
       }
 
-      const euThigh = buildSeries('European Union', 'chicken thigh');
+      // EU - chicken thigh  
+      const euThigh = buildSeries('EU', 'chicken thigh');
       if (euThigh.some(v => v != null)) {
         datasets.push({
           label: 'EU • chicken thigh',
-          data: euThigh,
-          tension: 0.25,
-          borderColor: countryColor['European Union'],
-          borderWidth: kindStyle['chicken thigh'].width,
-          borderDash: kindStyle['chicken thigh'].dash,
-          pointRadius: 0,
-          spanGaps: true
-        });
-      }
-
-      const ctx = $('chart').getContext('2d');
-      chart = new Chart(ctx, {
-        type: 'line',
-        data: { labels: allDates, datasets },
-        options: baseOptions()
-      });
-      return;
-    }
-
-    // --- multi series for other views (all, soy) ---
-    const wantedKinds = view === 'soy' ? ['soy'] : ['chicken','chicken thigh','chicken breast','soy'];
-    updateCardsMulti(view === 'all' ? 'All series' : 'Soy only');
-
-    const datasets = [];
-    
-    // Special handling for chicken view to avoid duplicates
-    const specialCountries = {
-      'Thailand': view === 'all' ? ['chicken','soy'] : ['soy'],
-      'United States': view === 'all' ? ['chicken breast','chicken thigh','soy'] : ['soy'],
-      'European Union': view === 'all' ? ['chicken breast','chicken thigh','soy'] : ['soy']
-    };
-
-    for (const c of ['Thailand', 'United States', 'European Union']) {
-      const kinds = specialCountries[c] || wantedKinds;
-      for (const k of kinds) {
-        const series = buildSeries(c === 'European Union' ? 'EU' : c, k);
-        if (series.every(v => v == null)) continue;
-
-        const style = kindStyle[k] || { dash: [], width: 2 };
-        const displayCountry = c === 'European Union' ? 'EU' : c;
-        datasets.push({
-          label: `${displayCountry} • ${k}`,
-          data: series,
-          tension: 0.25,
-          borderColor: countryColor[c] || '#3B82F6',
-          borderWidth: style.width,
-          borderDash: style.dash,
-          pointRadius: 0,
-          spanGaps: true
-        });
-      }
-    }
-
-    const ctx = $('chart').getContext('2d');
-    chart = new Chart(ctx, {
-      type: 'line',
-      data: { labels: allDates, datasets },
-      options: baseOptions()
-    });
-  }
-
-  ['view','country','commodity'].forEach(id => $(id).addEventListener('change', render));
-  render();
-}
-
-document.addEventListener('DOMContentLoaded', load);
+          data: euTh

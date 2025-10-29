@@ -50,16 +50,12 @@ async function load() {
 
   // Compute USD from a row, safely
   const usdFromRow = r => {
-    const v = r?.usd_per_kg ?? (
-      (r?.price_per_kg != null && (r?.fx_rate_to_usd != null || r?.fx_usd_per_inr != null || r?.fx_inr_per_usd != null))
-        ? (r.fx_rate_to_usd != null
-            ? r.price_per_kg * r.fx_rate_to_usd
-            : r.fx_inr_per_usd != null
-              ? r.price_per_kg * r.fx_inr_per_usd  // already USD/kg? fallback safe
-              : null)
-        : null
-    );
-    return Number.isFinite(v) ? v : null; // Chart.js skips nulls
+    if (!r) return null;
+    if (Number.isFinite(r.usd_per_kg)) return r.usd_per_kg;
+    if (Number.isFinite(r.price_per_kg) && Number.isFinite(r.fx_rate_to_usd)) {
+      return r.price_per_kg * r.fx_rate_to_usd;
+    }
+    return null; // Chart.js will skip nulls
   };
 
   // Global chart handle

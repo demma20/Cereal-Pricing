@@ -16,7 +16,7 @@
     .muted { color: #6b7280; font-size: .9rem; }
     .chart-wrap { height: 360px; }
     .chart-wrap canvas { width: 100%; height: 100%; display:block; background:#fff; border:1px solid #e5e7eb; border-radius:.75rem; }
-    .hidden { display: none; }  <!-- add this for hiding selects in "all" view -->
+    .hidden { display: none; }  /* used to hide selects in "all" view */
     @media (max-width: 900px){ .cards{grid-template-columns:1fr} }
   </style>
 </head>
@@ -31,9 +31,15 @@
           <option value="chicken">Chicken only</option>
           <option value="soy">Soy only</option>
         </select>
-    
-        <select id="country"></select>
-        <select id="commodity"></select>
+
+        <!-- IDs aligned to app.js: countrySelect + metricSelect -->
+        <select id="countrySelect">
+          <option value="">All countries</option>
+        </select>
+
+        <select id="metricSelect">
+          <option value="">All metrics</option>
+        </select>
       </div>
     </header>
 

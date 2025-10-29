@@ -1,128 +1,187 @@
-// app.js
-// Usage: node app.js input.txt output.txt
-// Input: text file where each line is (ideally) a JSON object; some lines may be partial/broken.
-// Output: a .txt file containing a JSON array, one object per line, commas between, wrapped in [].
+// Global variables
+let allData = [];
+let priceChart = null;
 
- 
-const fs = require('fs');
-const readline = require('readline');
-const { once } = require('events');
-
-if (process.argv.length < 4) {
-  console.error('Usage: node app.js <input.txt> <output.txt>');
-  process.exit(1);
-}
-
-const [, , inPath, outPath] = process.argv;
-
-function normalizeRecord(obj) {
-  const out = { ...obj };
-
-  // Required fields
-  const required = ['date', 'country', 'source', 'metric', 'unit', 'value'];
-  for (const k of required) {
-    if (!(k in out)) return null;
-  }
-
-  // Date -> YYYY-MM-DD
-  const d = new Date(out.date);
-  if (Number.isNaN(d.getTime())) return null;
-  out.date = d.toISOString().slice(0, 10);
-
-  // Strings -> trimmed
-  for (const k of ['country', 'source', 'metric', 'unit']) {
-    if (typeof out[k] !== 'string') return null;
-    out[k] = out[k].trim();
-    if (!out[k]) return null;
-  }
-
-  // Value -> number
-  if (typeof out.value === 'string') {
-    const v = Number(out.value.replace(/[, ]+/g, ''));
-    if (!Number.isFinite(v)) return null;
-    out.value = v;
-  } else if (!Number.isFinite(out.value)) {
-    return null;
-  }
-
-  return out;
-}
-
-function dedupeKey(rec) {
-  return [
-    rec.date,
-    rec.country.toLowerCase(),
-    rec.source.toLowerCase(),
-    rec.metric.toLowerCase(),
-    rec.unit.toLowerCase(),
-  ].join('|');
-}
-
-async function run() {
-  const rl = readline.createInterface({
-    input: fs.createReadStream(inPath, { encoding: 'utf8' }),
-    crlfDelay: Infinity,
-  });
-
-  const map = new Map(); // key -> record (last one wins)
-  let lineNum = 0;
-  let kept = 0,
-    skipped = 0;
-
-  rl.on('line', (line) => {
-    lineNum++;
-    const trimmed = line.trim();
-    if (!trimmed) return;
-
-    // Strip trailing commas (common when pasting array entries line-by-line)
-    let maybe = trimmed.replace(/,+\s*$/, '');
-
-    // Ignore array wrappers if the input accidentally includes them
-    if (maybe === '[' || maybe === ']') return;
-
+// Load and process data
+async function loadData() {
     try {
-      const obj = JSON.parse(maybe);
-      const norm = normalizeRecord(obj);
-      if (!norm) {
-        skipped++;
-        return;
-      }
-      const key = dedupeKey(norm);
-      map.set(key, norm);
-      kept++;
-    } catch {
-      // Incomplete or junk line — skip it
-      skipped++;
+        const response = await fetch('latest.json');
+        allData = await response.json();
+        
+        // Get unique values for filters
+        const countries = [...new Set(allData.map(d => d.country))].sort();
+        const commodities = [...new Set(allData.map(d => d.commodity))].sort();
+        
+        // Populate filter dropdowns
+        populateDropdown('commodityFilter', commodities);
+        populateDropdown('countryFilter', countries);
+        
+        // Initial update
+        updateDashboard();
+    } catch (error) {
+        console.error('Error loading data:', error);
     }
-  });
-
-  await once(rl, 'close');
-
-  const records = Array.from(map.values()).sort((a, b) =>
-    a.date < b.date ? -1 : a.date > b.date ? 1 : 0
-  );
-
-  // Write as a JSON array with one object per line, commas between, wrapped in []
-  const fd = fs.openSync(outPath, 'w');
-  try {
-    fs.writeSync(fd, '[\n');
-    records.forEach((r, i) => {
-      const line = JSON.stringify(r);
-      const comma = i === records.length - 1 ? '' : ',';
-      fs.writeSync(fd, line + comma + '\n');
-    });
-    fs.writeSync(fd, ']\n');
-  } finally {
-    fs.closeSync(fd);
-  }
-
-  console.log(
-    `Done. Read lines: ${lineNum}, Parsed: ${kept + skipped}, Kept valid: ${kept}, Unique after dedupe: ${records.length}, Skipped: ${skipped}`
-  );
-  console.log(`Wrote: ${outPath}`);
 }
 
-run().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+function populateDropdown(id, values) {
+    const select = document.getElementById(id);
+    const allOption = select.querySelector('option');
+    
+    values.forEach(value => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = value;
+        select.appendChild(option);
+    });
+}
+
+function updateDashboard() {
+    const commodity = document.getElementById('commodityFilter').value;
+    const country = document.getElementById('countryFilter').value;
+    const metric = document.getElementById('metricFilter').value;
+    
+    let filtered = allData;
+    
+    if (commodity !== 'all') {
+        filtered = filtered.filter(d => d.commodity === commodity);
+    }
+    
+    if (country !== 'all') {
+        filtered = filtered.filter(d => d.country === country);
+    }
+    
+    if (metric !== 'all') {
+        filtered = filtered.filter(d => d.product_form === metric);
+    }
+    
+    updateCards(filtered);
+    updateChart(filtered);
+}
+
+function updateCards(data) {
+    if (data.length === 0) return;
+    
+    // Get most recent record
+    const latest = data.reduce((a, b) => 
+        new Date(a.date) > new Date(b.date) ? a : b
+    );
+    
+    // Update headline price
+    document.getElementById('headlinePrice').textContent = 
+        `${latest.usd_per_kg.toFixed(2)} USD/kg`;
+    
+    // Update INR price
+    document.getElementById('inrPrice').textContent = 
+        latest.inr_per_kg ? `${latest.inr_per_kg.toFixed(2)}` : '—';
+    
+    // Update source info
+    document.getElementById('marketLevel').textContent = latest.market_level || '—';
+    document.getElementById('sourceInfo').textContent = latest.source || '—';
+    document.getElementById('countryInfo').textContent = latest.country || '—';
+    document.getElementById('commodityInfo').textContent = latest.commodity || '—';
+}
+
+function updateChart(data) {
+    // Group data by country and metric
+    const grouped = {};
+    
+    data.forEach(record => {
+        const key = `${record.country} • ${record.commodity}`;
+        if (!grouped[key]) {
+            grouped[key] = [];
+        }
+        grouped[key].push({
+            x: new Date(record.date),
+            y: record.usd_per_kg  // Changed from 'price' to 'usd_per_kg'
+        });
+    });
+    
+    // Sort each group by date
+    Object.keys(grouped).forEach(key => {
+        grouped[key].sort((a, b) => a.x - b.x);
+    });
+    
+    // Create datasets
+    const datasets = Object.keys(grouped).map((key, index) => ({
+        label: key,
+        data: grouped[key],
+        borderColor: getColor(index),
+        backgroundColor: getColor(index, 0.1),
+        borderWidth: 2,
+        pointRadius: 0,
+        fill: false
+    }));
+    
+    const ctx = document.getElementById('priceChart').getContext('2d');
+    
+    if (priceChart) {
+        priceChart.destroy();
+    }
+    
+    priceChart = new Chart(ctx, {
+        type: 'line',
+        data: { datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                x: {
+                    type: 'time',
+                    time: {
+                        unit: 'month',
+                        displayFormats: {
+                            month: 'MMM yyyy'
+                        }
+                    },
+                    title: {
+                        display: false
+                    }
+                },
+                y: {
+                    title: {
+                        display: false
+                    },
+                    ticks: {
+                        callback: function(value) {
+                            return '$' + value.toFixed(2);
+                        }
+                    }
+                }
+            },
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'bottom'
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            return context.dataset.label + ': $' + 
+                                context.parsed.y.toFixed(2) + '/kg';
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+function getColor(index, alpha = 1) {
+    const colors = [
+        `rgba(74, 144, 226, ${alpha})`,   // blue
+        `rgba(80, 227, 194, ${alpha})`,   // teal
+        `rgba(245, 166, 35, ${alpha})`,   // orange
+        `rgba(126, 211, 33, ${alpha})`,   // green
+        `rgba(208, 2, 27, ${alpha})`,     // red
+        `rgba(74, 20, 140, ${alpha})`     // purple
+    ];
+    return colors[index % colors.length];
+}
+
+// Event listeners
+document.getElementById('commodityFilter').addEventListener('change', updateDashboard);
+document.getElementById('countryFilter').addEventListener('change', updateDashboard);
+document.getElementById('metricFilter').addEventListener('change', updateDashboard);
+
+// Initialize on page load
+loadData();

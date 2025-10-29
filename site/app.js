@@ -21,24 +21,31 @@ async function load() {
   // Normalize a row to a chicken "kind"
   function normalizeKind(row) {
     const c = String(row?.commodity || '').toLowerCase();
-    // anything soy -> soy
+  
+    // soy stays soy
     if (c.includes('soy')) return 'soy';
-
-    // chicken hierarchy (check specific cuts first)
-    // breast synonyms
-    if (c.includes('breast') || c.includes('b/s') || c.includes('fillet') || c.includes('fillets') || c.includes('breast fillet')) {
-      return 'chicken';
-    }
-    // thigh synonyms (sometimes "legs" used as proxy; map to thigh if asked)
-    if (c.includes('thigh')) return 'chicken';
-    if (c.includes('leg')) return 'chicken'; // your earlier instruction to treat EU "legs" as thigh
-
-    // generic chicken (whole or unspecified)
+  
+    // ---- chicken subtypes (return distinct kinds) ----
+    // breast (EU "breast fillet", US "B/S", etc.)
+    if (
+      c.includes('breast') ||
+      c.includes('fillet') ||
+      c.includes('fillets') ||
+      c.includes('b/s') ||
+      c.includes('breast fillet')
+    ) return 'chicken breast';
+  
+    // thigh (map any "thigh" or "leg/legs" feed to thigh)
+    if (c.includes('thigh')) return 'chicken thigh';
+    if (c.includes('leg'))   return 'chicken thigh';
+  
+    // generic chicken (whole/unspecified)
     if (c.includes('chicken') || c.includes('broiler') || c.includes('poultry')) return 'chicken';
-
-    // fallback to original commodity for single view; excluded from grouped chicken
+  
+    // fallback: leave as-is for single view
     return row?.commodity || '';
   }
+
 
   // Precompute kind on each row (don’t mutate the original object structure too much)
   const data = raw.map(r => ({ ...r, __kind: normalizeKind(r) }));

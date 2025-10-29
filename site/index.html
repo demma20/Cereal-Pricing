@@ -130,4 +130,108 @@
 
     for (const c of countries) {
       const o = document.createElement("option");
-      o.value = o.textContent = c;
+      o.value = o.textContent = c; $("countrySelect").appendChild(o);
+    }
+    for (const m of metrics) {
+      const o = document.createElement("option");
+      o.value = o.textContent = m; $("metricSelect").appendChild(o);
+    }
+
+    // ---------- Chart helpers ----------
+    function makeDatasets(seriesRows, labelFn) {
+      const groups = new Map();
+      for (const r of seriesRows) {
+        const k = labelFn(r); // e.g., "India • chicken breast"
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k).push({ x: r.date, y: r.usd });
+      }
+      return [...groups.entries()].map(([label, data]) => ({
+        label, data,
+        borderColor: colorFor(label),
+        backgroundColor: colorFor(label),
+        tension: 0.2, pointRadius: 0
+      }));
+    }
+
+    function buildChart(canvasId, seriesRows, title) {
+      const node = $(canvasId);
+      if (!node) return null;
+      if (node.__chart) { node.__chart.destroy(); node.__chart = null; }
+
+      const chart = new Chart(node.getContext("2d"), {
+        type: "line",
+        data: { datasets: makeDatasets(seriesRows, r => `${r.country} • ${r.metric}`) },
+        options: {
+          parsing: false,
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            title: { display: !!title, text: title },
+            legend: { display: true, position: "bottom" },
+            tooltip: {
+              callbacks: {
+                label: (ctx) => `${ctx.dataset.label}: ${fmt.format(ctx.parsed.y)} USD/kg`
+              }
+            }
+          },
+          scales: {
+            x: { type: "time", time: { unit: "month" } },
+            y: { ticks: { callback: (v) => fmt.format(v) } }
+          }
+        }
+      });
+      node.__chart = chart;
+      return chart;
+    }
+
+    function applyFilters() {
+      const view = ($("view").value || "chicken").toLowerCase();
+      const cc   = $("countrySelect").value || "";
+      const mm   = $("metricSelect").value || "";
+
+      const bySel = rows.filter(r =>
+        (!cc || r.country === cc) &&
+        (!mm || r.metric === mm)
+      );
+
+      const chickenRows = bySel.filter(r => /chicken/i.test(r.metric));
+      const soyRows     = bySel.filter(r => /soy/i.test(r.metric));
+
+      // Toggle visibility
+      const chickenWrap = $("chickenChart").closest(".chart-wrap");
+      const soyWrap     = $("soyChart").closest(".chart-wrap");
+      chickenWrap.style.display = (view === "soy") ? "none" : "";
+      soyWrap.style.display     = (view === "chicken") ? "none" : "";
+
+      // Build charts
+      buildChart("chickenChart", chickenRows, "Chicken (USD/kg)");
+      buildChart("soyChart",     soyRows,     "Soy (USD/kg)");
+
+      // Headline cards: most recent point among the currently visible view
+      const pool = (view === "chicken") ? chickenRows
+                 : (view === "soy") ? soyRows
+                 : [...bySel];
+
+      const latest = pool.sort((a,b) => a.date.localeCompare(b.date)).at(-1);
+      if (latest) {
+        $("latest").textContent = `${fmt.format(latest.usd)} USD/kg`;
+        $("inr").textContent    = (latest.inr != null) ? `${fmt.format(latest.inr)} INR/kg` : "—";
+        $("source").textContent = [latest.market, latest.source, latest.country, latest.metric]
+          .filter(Boolean).join(" • ");
+      } else {
+        $("latest").textContent = "—";
+        $("inr").textContent    = "—";
+        $("source").textContent = "—";
+      }
+    }
+
+    // ---------- Hook up UI ----------
+    for (const id of ["view","countrySelect","metricSelect"]) {
+      $(id).addEventListener("change", applyFilters);
+    }
+
+    // Initial paint
+    applyFilters();
+  </script>
+</body>
+</html>

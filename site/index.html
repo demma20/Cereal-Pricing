@@ -6,7 +6,7 @@
   <title>Agri Prices Dashboard</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js" defer></script>
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 1rem; }
+    body { font-family: system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; margin:0; padding:1rem; }
     .container { max-width: 1100px; margin: 0 auto; }
     header { display:flex; align-items:center; justify-content:space-between; margin-bottom: 1rem; gap:1rem; flex-wrap: wrap; }
     .filters { display:flex; gap:.5rem; flex-wrap: wrap; }
@@ -14,9 +14,8 @@
     .cards { display:grid; grid-template-columns: repeat(3, minmax(220px,1fr)); gap: 1rem; margin-top: 1rem; }
     .card { padding: 1rem; border: 1px solid #e5e7eb; border-radius: .75rem; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
     .muted { color: #6b7280; font-size: .9rem; }
-    .chart-wrap { height: 360px; }
+    .chart-wrap { height: 360px; margin-top:1rem; }
     .chart-wrap canvas { width: 100%; height: 100%; display:block; background:#fff; border:1px solid #e5e7eb; border-radius:.75rem; }
-    .hidden { display: none; }  /* used to hide selects in "all" view */
     @media (max-width: 900px){ .cards{grid-template-columns:1fr} }
   </style>
 </head>
@@ -28,37 +27,132 @@
         <select id="view">
           <option value="single">Single series</option>
           <option value="all">All series</option>
-          <option value="chicken">Chicken only</option>
+          <option value="chicken" selected>Chicken only</option>
           <option value="soy">Soy only</option>
         </select>
-
-        <!-- IDs aligned to app.js: countrySelect + metricSelect -->
-        <select id="countrySelect">
-          <option value="">All countries</option>
-        </select>
-
-        <select id="metricSelect">
-          <option value="">All metrics</option>
-        </select>
+        <select id="countrySelect"><option value="">All countries</option></select>
+        <select id="metricSelect"><option value="">All metrics</option></select>
       </div>
     </header>
 
     <div class="cards">
-      <div class="card"><div class="muted">Headline price (per kg)</div>
-        <div id="latest" style="font-size:1.8rem;font-weight:700;"></div>
-      </div>
-      <div class="card"><div class="muted">INR per kg</div>
-        <div id="inr" style="font-size:1.6rem;"></div>
-      </div>
-      <div class="card"><div class="muted">Market level / Source</div>
-        <div id="source"></div>
-      </div>
+      <div class="card"><div class="muted">Headline price (per kg)</div><div id="latest" style="font-size:1.8rem;font-weight:700;"></div></div>
+      <div class="card"><div class="muted">INR per kg</div><div id="inr" style="font-size:1.6rem;"></div></div>
+      <div class="card"><div class="muted">Market level / Source</div><div id="source"></div></div>
     </div>
 
-    <div class="chart-wrap" style="margin-top:1rem;">
-      <canvas id="chart"></canvas>
-    </div>
+    <div class="chart-wrap"><canvas id="soyChart"></canvas></div>
+    <div class="chart-wrap"><canvas id="chickenChart"></canvas></div>
   </div>
-  <script src="./app.js" defer></script>
+
+  <script type="module">
+    // Helper: stable color per country
+    function colorFor(country) {
+      // deterministic hash → HSL (Chart.js will accept strings)
+      let h = 0;
+      for (let i=0;i<country.length;i++) h = (h*31 + country.charCodeAt(i)) >>> 0;
+      const hue = h % 360;
+      return `hsl(${hue} 70% 45%)`;
+    }
+
+    // Load normalized records: [{date, country, source, metric, unit, value}]
+    const res = await fetch('./data.json');
+    const rows = await res.json();
+
+    // Populate filters (optional)
+    const countries = [...new Set(rows.map(r => r.country))].sort();
+    const metrics = [...new Set(rows.map(r => r.metric))].sort();
+    const countrySelect = document.getElementById('countrySelect');
+    const metricSelect = document.getElementById('metricSelect');
+    countries.forEach(c => countrySelect.insertAdjacentHTML('beforeend', `<option>${c}</option>`));
+    metrics.forEach(m => metricSelect.insertAdjacentHTML('beforeend', `<option>${m}</option>`));
+
+    // Utilities
+    const byCommodity = (name) => rows.filter(r => r.metric.toLowerCase().includes(name));
+    const toTS = r => r.date;
+
+    // --- SOY chart: each country a line, solid
+    const soy = byCommodity('soy'); // matches “soy”, “soybean”, etc. Adjust if needed.
+    const soyByCountry = new Map();
+    for (const r of soy) {
+      // keep only USD/kg if you have mixed units; otherwise remove this guard
+      if (!/usd\/kg/i.test(r.unit)) continue;
+      const k = r.country;
+      if (!soyByCountry.has(k)) soyByCountry.set(k, []);
+      soyByCountry.get(k).push({ x: toTS(r), y: r.value });
+    }
+    const soyDatasets = [...soyByCountry.entries()].map(([country, pts]) => ({
+      label: country,
+      data: pts.sort((a,b)=>a.x.localeCompare(b.x)),
+      borderColor: colorFor(country),
+      fill: false,
+      tension: 0.2
+    }));
+
+    const soyCtx = document.getElementById('soyChart').getContext('2d');
+    const soyChart = new Chart(soyCtx, {
+      type: 'line',
+      data: { datasets: soyDatasets },
+      options: {
+        parsing: false,
+        scales: {
+          x: { type: 'time', time: { unit: 'month' } },
+          y: { beginAtZero: true, title: { display: true, text: 'USD/kg' } }
+        },
+        plugins: { title: { display: true, text: 'Soy prices by country' }, legend: { position: 'bottom' } }
+      }
+    });
+
+    // --- CHICKEN chart: per country, breast (solid) vs thigh (dotted). Same color by country.
+    const chicken = rows.filter(r => /chicken/i.test(r.metric));
+    const seriesMap = new Map(); // key: `${country}|cut`
+    for (const r of chicken) {
+      if (!/usd\/kg/i.test(r.unit)) continue;
+
+      const country = r.country;
+      const m = r.metric.toLowerCase();
+      const cut = /thigh/.test(m) ? 'thigh' : 'non-thigh'; // treat breast/whole as solid
+      const key = `${country}|${cut}`;
+      if (!seriesMap.has(key)) seriesMap.set(key, []);
+      seriesMap.get(key).push({ x: toTS(r), y: r.value });
+    }
+
+    const chickenDatasets = [...seriesMap.entries()].map(([key, pts]) => {
+      const [country, cut] = key.split('|');
+      const dashed = cut === 'thigh';
+      return {
+        label: `${country}${dashed ? ' – thigh' : ''}`,
+        data: pts.sort((a,b)=>a.x.localeCompare(b.x)),
+        borderColor: colorFor(country),
+        borderDash: dashed ? [6, 4] : undefined,
+        fill: false,
+        tension: 0.2
+      };
+    });
+
+    const chickenCtx = document.getElementById('chickenChart').getContext('2d');
+    const chickenChart = new Chart(chickenCtx, {
+      type: 'line',
+      data: { datasets: chickenDatasets },
+      options: {
+        parsing: false,
+        scales: {
+          x: { type: 'time', time: { unit: 'month' } },
+          y: { beginAtZero: true, title: { display: true, text: 'USD/kg' } }
+        },
+        plugins: { title: { display: true, text: 'Chicken prices by country (solid=breast/other, dotted=thigh)' }, legend: { position: 'bottom' } }
+      }
+    });
+
+    // Optional: update the “cards” using the latest chicken non-thigh datapoint
+    const usable = chicken.filter(r => !/thigh/i.test(r.metric) && /usd\/kg/i.test(r.unit)).sort((a,b)=>a.date.localeCompare(b.date));
+    const latest = usable.at(-1);
+    if (latest) {
+      document.getElementById('latest').textContent = latest.value.toFixed(2) + ' ' + latest.unit;
+      document.getElementById('source').textContent = `${latest.source} • ${latest.country} • ${latest.metric}`;
+      // Only if you have INR conversion precomputed; otherwise remove this line:
+      // document.getElementById('inr').textContent = (latest.value * fx_usd_to_inr).toFixed(2) + ' INR/kg';
+    }
+  </script>
 </body>
 </html>

@@ -1,127 +1,64 @@
-// app.js
-// Usage: node app.js input.txt output.txt
-// Input: text file where each line is (ideally) a JSON object; some lines may be partial/broken.
-// Output: a .txt file containing a JSON array, one object per line, commas between, wrapped in [].
+// app.js (browser)
+(async () => {
+  const countryEl = document.getElementById('country');
+  const commodityEl = document.getElementById('commodity');
+  const latestEl = document.getElementById('latest');
+  const inrEl = document.getElementById('inr');
+  const sourceEl = document.getElementById('source');
+  const ctx = document.getElementById('chart').getContext('2d');
 
-const fs = require('fs');
-const readline = require('readline');
-const { once } = require('events');
+  let rows = [];
+  let chart;
 
-if (process.argv.length < 4) {
-  console.error('Usage: node app.js <input.txt> <output.txt>');
-  process.exit(1);
-}
+  function uniq(a){ return [...new Set(a)].filter(Boolean).sort(); }
 
-const [, , inPath, outPath] = process.argv;
-
-function normalizeRecord(obj) {
-  const out = { ...obj };
-
-  // Required fields
-  const required = ['date', 'country', 'source', 'metric', 'unit', 'value'];
-  for (const k of required) {
-    if (!(k in out)) return null;
-  }
-
-  // Date -> YYYY-MM-DD
-  const d = new Date(out.date);
-  if (Number.isNaN(d.getTime())) return null;
-  out.date = d.toISOString().slice(0, 10);
-
-  // Strings -> trimmed
-  for (const k of ['country', 'source', 'metric', 'unit']) {
-    if (typeof out[k] !== 'string') return null;
-    out[k] = out[k].trim();
-    if (!out[k]) return null;
-  }
-
-  // Value -> number
-  if (typeof out.value === 'string') {
-    const v = Number(out.value.replace(/[, ]+/g, ''));
-    if (!Number.isFinite(v)) return null;
-    out.value = v;
-  } else if (!Number.isFinite(out.value)) {
-    return null;
-  }
-
-  return out;
-}
-
-function dedupeKey(rec) {
-  return [
-    rec.date,
-    rec.country.toLowerCase(),
-    rec.source.toLowerCase(),
-    rec.metric.toLowerCase(),
-    rec.unit.toLowerCase(),
-  ].join('|');
-}
-
-async function run() {
-  const rl = readline.createInterface({
-    input: fs.createReadStream(inPath, { encoding: 'utf8' }),
-    crlfDelay: Infinity,
-  });
-
-  const map = new Map(); // key -> record (last one wins)
-  let lineNum = 0;
-  let kept = 0,
-    skipped = 0;
-
-  rl.on('line', (line) => {
-    lineNum++;
-    const trimmed = line.trim();
-    if (!trimmed) return;
-
-    // Strip trailing commas (common when pasting array entries line-by-line)
-    let maybe = trimmed.replace(/,+\s*$/, '');
-
-    // Ignore array wrappers if the input accidentally includes them
-    if (maybe === '[' || maybe === ']') return;
-
-    try {
-      const obj = JSON.parse(maybe);
-      const norm = normalizeRecord(obj);
-      if (!norm) {
-        skipped++;
-        return;
-      }
-      const key = dedupeKey(norm);
-      map.set(key, norm);
-      kept++;
-    } catch {
-      // Incomplete or junk line — skip it
-      skipped++;
-    }
-  });
-
-  await once(rl, 'close');
-
-  const records = Array.from(map.values()).sort((a, b) =>
-    a.date < b.date ? -1 : a.date > b.date ? 1 : 0
-  );
-
-  // Write as a JSON array with one object per line, commas between, wrapped in []
-  const fd = fs.openSync(outPath, 'w');
   try {
-    fs.writeSync(fd, '[\n');
-    records.forEach((r, i) => {
-      const line = JSON.stringify(r);
-      const comma = i === records.length - 1 ? '' : ',';
-      fs.writeSync(fd, line + comma + '\n');
-    });
-    fs.writeSync(fd, ']\n');
-  } finally {
-    fs.closeSync(fd);
+    const res = await fetch('data/latest.json', { cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    rows = await res.json();
+  } catch (e) {
+    console.error('Failed to load data/latest.json:', e);
+    return;
   }
 
-  console.log(
-    `Done. Read lines: ${lineNum}, Parsed: ${kept + skipped}, Kept valid: ${kept}, Unique after dedupe: ${records.length}, Skipped: ${skipped}`
-  );
-  console.log(`Wrote: ${outPath}`);
-}
+  // populate filters
+  const countries = uniq(rows.map(r => r.country));
+  const commodities = uniq(rows.map(r => r.commodity));
+  countryEl.innerHTML = '<option value="">All countries</option>' + countries.map(c=>`<option>${c}</option>`).join('');
+  commodityEl.innerHTML = '<option value="">All metrics</option>' + commodities.map(c=>`<option>${c}</option>`).join('');
 
-run().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+  function render(){
+    const ctry = countryEl.value;
+    const comm = commodityEl.value;
+
+    let data = rows;
+    if (ctry) data = data.filter(r => r.country === ctry);
+    if (comm) data = data.filter(r => r.commodity === comm);
+    data.sort((a,b)=>a.date.localeCompare(b.date));
+
+    // headline cards
+    const last = data[data.length - 1];
+    latestEl.textContent = last ? String(last.value) : '';
+    inrEl.textContent = last && last.inr_per_kg ? String(last.inr_per_kg) : '';
+    sourceEl.textContent = last ? `${last.market || ''} ${last.source ? ' / ' + last.source : ''}`.trim() : '';
+
+    // chart
+    const labels = data.map(r=>r.date);
+    const values = data.map(r=>r.value);
+    if (!chart){
+      chart = new Chart(ctx, {
+        type: 'line',
+        data: { labels, datasets: [{ label: 'Price per kg', data: values, tension: 0.25, pointRadius: 0 }] },
+        options: { responsive: true, maintainAspectRatio: false, plugins:{ legend:{display:false} } }
+      });
+    } else {
+      chart.data.labels = labels;
+      chart.data.datasets[0].data = values;
+      chart.update();
+    }
+  }
+
+  countryEl.addEventListener('change', render);
+  commodityEl.addEventListener('change', render);
+  render();
+})();

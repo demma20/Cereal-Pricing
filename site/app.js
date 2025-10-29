@@ -7,6 +7,16 @@ async function load() {
   const uniq = arr => [...new Set(arr)].sort();
   const parseDate = s => new Date(s);
 
+  // KIND NORMALIZATION: map various commodity labels to canonical kinds
+  const kindOf = (row) => {
+    const c = (row.commodity || '').toLowerCase();
+    if (c.includes('soy')) return 'soy';
+    if (c.includes('breast')) return 'chicken breast';
+    if (c.includes('thigh')) return 'chicken thigh';
+    if (c.includes('chicken')) return 'chicken';
+    return row.commodity || '';
+  };
+
   // Sets & defaults
   const countries = uniq(data.map(d => d.country).filter(Boolean));
   const commodities = uniq(data.map(d => d.commodity).filter(Boolean));
@@ -26,22 +36,30 @@ async function load() {
   $('commodity').value = commodities.includes('soy') ? 'soy' : commodities[0];
 
   // Color per country (auto-assign if new countries appear)
-  const palette = [
-    '#E54B4B', '#3B82F6', '#22C55E', '#F59E0B',
-    '#A855F7', '#EF4444', '#06B6D4', '#84CC16',
-    '#F97316', '#10B981'
-  ];
+  const palette = ['#E54B4B','#3B82F6','#22C55E','#F59E0B','#A855F7','#EF4444','#06B6D4','#84CC16','#F97316','#10B981'];
   const countryColor = {};
   countries.forEach((c,i)=> countryColor[c] = palette[i % palette.length]);
+
+  // Line style per kind
+  const kindStyle = {
+    'chicken':        { dash: [],       width: 2   },
+    'chicken thigh':  { dash: [6, 4],   width: 2   },
+    'chicken breast': { dash: [2, 3],   width: 2.5 },
+    'soy':            { dash: [8, 5],   width: 2.5 },
+  };
 
   // Compute USD from a row, safely
   const usdFromRow = r => {
     const v = r?.usd_per_kg ?? (
-      (r?.price_per_kg != null && r?.fx_rate_to_usd != null)
-        ? r.price_per_kg * r.fx_rate_to_usd
+      (r?.price_per_kg != null && (r?.fx_rate_to_usd != null || r?.fx_usd_per_inr != null || r?.fx_inr_per_usd != null))
+        ? (r.fx_rate_to_usd != null
+            ? r.price_per_kg * r.fx_rate_to_usd
+            : r.fx_inr_per_usd != null
+              ? r.price_per_kg * r.fx_inr_per_usd  // already USD/kg? fallback safe
+              : null)
         : null
     );
-    return Number.isFinite(v) ? v : null; // Chart.js skips nulls (not NaNs)
+    return Number.isFinite(v) ? v : null; // Chart.js skips nulls
   };
 
   // Global chart handle
@@ -50,10 +68,10 @@ async function load() {
   // Master set of all dates (strings), sorted
   const allDates = uniq(data.map(d => d.date)).sort((a,b)=> parseDate(a) - parseDate(b));
 
-  // Build a dataset for (country, commodity) aligned to master labels
-  function buildSeries(country, commodity) {
+  // Build a dataset for (country, KIND) aligned to master labels
+  function buildSeriesByKind(country, targetKind) {
     const rows = data
-      .filter(d => d.country === country && d.commodity === commodity)
+      .filter(d => d.country === country && kindOf(d) === targetKind)
       .sort((a,b)=> parseDate(a.date) - parseDate(b.date));
 
     const byDate = new Map(rows.map(r => [r.date, usdFromRow(r)]));
@@ -87,91 +105,10 @@ async function load() {
   function updateCardsMulti(label) {
     $('latest').textContent = '—';
     $('inr').textContent    = '—';
-    $('source').textContent = label; // e.g., "All series" / "Chicken only" / "Soy only"
+    $('source').textContent = label;
   }
 
-  // Render the chart based on the current "view" mode
-  function render() {
-    const view = $('view').value;
-    const c = $('country').value;
-    const k = $('commodity').value;
-
-    if (chart) { chart.destroy(); chart = null; }
-
-    // Single-series view (original UI)
-    if (view === 'single') {
-      const rows = data
-        .filter(d => d.country === c && d.commodity === k)
-        .sort((a,b)=> parseDate(a) - parseDate(b));
-
-      updateCardsSingle(rows);
-
-      const labels = rows.map(r => r.date);
-      const values = rows.map(usdFromRow);
-
-      const ctx = $('chart').getContext('2d');
-      chart = new Chart(ctx, {
-        type: 'line',
-        data: {
-          labels,
-          datasets: [{
-            label: `${c} • ${k} (USD/kg)`,
-            data: values,
-            tension: 0.25,
-            borderColor: countryColor[c] || '#3B82F6',
-            borderWidth: 2,
-            borderDash: k === 'soy' ? [6,4] : [],
-            spanGaps: true,
-            pointRadius: 0
-          }]
-        },
-        options: baseOptions()
-      });
-      return;
-    }
-
-    // Multi-series views
-    const modeToTypes = {
-      all: ['chicken', 'soy'],
-      chicken: ['chicken'],
-      soy: ['soy']
-    };
-    const wantedTypes = modeToTypes[view] || ['chicken','soy'];
-
-    updateCardsMulti(
-      view === 'all' ? 'All series' : (view === 'chicken' ? 'Chicken only' : 'Soy only')
-    );
-
-    // Build datasets for each (country, type) combo
-    const datasets = [];
-    for (const country of countries) {
-      for (const type of wantedTypes) {
-        const series = buildSeries(country, type);
-        // Skip if the series is entirely null
-        if (series.every(v => v == null)) continue;
-
-        datasets.push({
-          label: `${country} • ${type}`,
-          data: series,
-          tension: 0.25,
-          borderColor: countryColor[country],
-          borderWidth: type === 'soy' ? 2.5 : 2,
-          borderDash: type === 'soy' ? [6,4] : [],
-          pointRadius: 0,
-          spanGaps: true
-        });
-      }
-    }
-
-    const ctx = $('chart').getContext('2d');
-    chart = new Chart(ctx, {
-      type: 'line',
-      data: { labels: allDates, datasets },
-      options: baseOptions()
-    });
-  }
-
-  // Shared chart options (y starts at 0, nice ticks, decimation, etc.)
+  // Shared chart options
   function baseOptions(){
     return {
       responsive: true,
@@ -185,14 +122,96 @@ async function load() {
       },
       scales: {
         x: { ticks: { maxTicksLimit: 8 } },
-        y: {
-          min: 0,
-          beginAtZero: true,
-          ticks: { maxTicksLimit: 6 }
-        }
+        y: { min: 0, beginAtZero: true, ticks: { maxTicksLimit: 6 } }
       },
       devicePixelRatio: 1
     };
+  }
+
+  // Render the chart based on the current "view" mode
+  function render() {
+    const view = $('view').value;
+    const c = $('country').value;
+    const k = $('commodity').value;
+
+    if (chart) { chart.destroy(); chart = null; }
+
+    // Single-series view (exact commodity match, unchanged UX)
+    if (view === 'single') {
+      const rows = data
+        .filter(d => d.country === c && d.commodity === k)
+        .sort((a,b)=> parseDate(a) - parseDate(b));
+
+      updateCardsSingle(rows);
+
+      const labels = rows.map(r => r.date);
+      const values = rows.map(usdFromRow);
+      const seriesKind = rows.length ? kindOf(rows[0]) : kindOf({commodity:k});
+      const style = kindStyle[seriesKind] || { dash: [], width: 2 };
+
+      const ctx = $('chart').getContext('2d');
+      chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            label: `${c} • ${k} (USD/kg)`,
+            data: values,
+            tension: 0.25,
+            borderColor: countryColor[c] || '#3B82F6',
+            borderWidth: style.width,
+            borderDash: style.dash,
+            spanGaps: true,
+            pointRadius: 0
+          }]
+        },
+        options: baseOptions()
+      });
+      return;
+    }
+
+    // Multi-series views
+    // Map each view to the KINDs we want to include (note 'chicken' view includes all chicken kinds)
+    const viewToKinds = {
+      all:      ['chicken','chicken thigh','chicken breast','soy'],
+      chicken:  ['chicken','chicken thigh','chicken breast'],
+      soy:      ['soy']
+    };
+    const wantedKinds = viewToKinds[view] || ['chicken','chicken thigh','chicken breast','soy'];
+
+    updateCardsMulti(
+      view === 'all' ? 'All series'
+      : view === 'chicken' ? 'Chicken only'
+      : 'Soy only'
+    );
+
+    // Build datasets: for each country and each KIND
+    const datasets = [];
+    for (const country of countries) {
+      for (const kind of wantedKinds) {
+        const series = buildSeriesByKind(country, kind);
+        if (series.every(v => v == null)) continue;
+
+        const style = kindStyle[kind] || { dash: [], width: 2 };
+        datasets.push({
+          label: `${country} • ${kind}`,
+          data: series,
+          tension: 0.25,
+          borderColor: countryColor[country],
+          borderWidth: style.width,
+          borderDash: style.dash,
+          pointRadius: 0,
+          spanGaps: true
+        });
+      }
+    }
+
+    const ctx = $('chart').getContext('2d');
+    chart = new Chart(ctx, {
+      type: 'line',
+      data: { labels: allDates, datasets },
+      options: baseOptions()
+    });
   }
 
   // Events

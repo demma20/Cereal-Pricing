@@ -1,127 +1,152 @@
 // app.js
-// Usage: node app.js input.txt output.txt
-// Input: text file where each line is (ideally) a JSON object; some lines may be partial/broken.
-// Output: a .txt file containing a JSON array, one object per line, commas between, wrapped in [].
+(() => {
+  const els = {
+    view: document.getElementById('view'),
+    country: document.getElementById('country'),
+    commodity: document.getElementById('commodity'),
+    latest: document.getElementById('latest'),
+    inr: document.getElementById('inr'),
+    source: document.getElementById('source'),
+    canvas: document.getElementById('chart'),
+  };
 
-const fs = require('fs');
-const readline = require('readline');
-const { once } = require('events');
+  let RAW = [];
+  let chart;
 
-if (process.argv.length < 4) {
-  console.error('Usage: node app.js <input.txt> <output.txt>');
-  process.exit(1);
-}
+  // ---- tiny helpers ---------------------------------------------------------
+  const firstKey = (obj, keys) => keys.find(k => k in obj);
+  const val = (row, keys, fallback=null) => {
+    const k = firstKey(row, keys);
+    return k ? row[k] : fallback;
+  };
+  const parseDate = (d) => (d instanceof Date ? d : new Date(d));
+  const fmt = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
 
-const [, , inPath, outPath] = process.argv;
-
-function normalizeRecord(obj) {
-  const out = { ...obj };
-
-  // Required fields
-  const required = ['date', 'country', 'source', 'metric', 'unit', 'value'];
-  for (const k of required) {
-    if (!(k in out)) return null;
+  // pick canonical field names by sniffing the first row
+  function canonicalize(row) {
+    return {
+      country: val(row, ['country', 'Country']),
+      commodity: val(row, ['commodity', 'item', 'Commodity']),
+      date: parseDate(val(row, ['date', 'Date'])),
+      price: Number(val(row, ['price_per_kg','price','usd_per_kg','value','Price'], NaN)),
+      inr: Number(val(row, ['inr_per_kg','inr','inr_price'], NaN)),
+      source: val(row, ['source','market','Market','Source'], ''),
+    };
   }
 
-  // Date -> YYYY-MM-DD
-  const d = new Date(out.date);
-  if (Number.isNaN(d.getTime())) return null;
-  out.date = d.toISOString().slice(0, 10);
-
-  // Strings -> trimmed
-  for (const k of ['country', 'source', 'metric', 'unit']) {
-    if (typeof out[k] !== 'string') return null;
-    out[k] = out[k].trim();
-    if (!out[k]) return null;
+  function uniqSorted(arr) {
+    return [...new Set(arr.filter(Boolean))].sort((a,b)=> String(a).localeCompare(String(b)));
   }
 
-  // Value -> number
-  if (typeof out.value === 'string') {
-    const v = Number(out.value.replace(/[, ]+/g, ''));
-    if (!Number.isFinite(v)) return null;
-    out.value = v;
-  } else if (!Number.isFinite(out.value)) {
-    return null;
-  }
-
-  return out;
-}
-
-function dedupeKey(rec) {
-  return [
-    rec.date,
-    rec.country.toLowerCase(),
-    rec.source.toLowerCase(),
-    rec.metric.toLowerCase(),
-    rec.unit.toLowerCase(),
-  ].join('|');
-}
-
-async function run() {
-  const rl = readline.createInterface({
-    input: fs.createReadStream(inPath, { encoding: 'utf8' }),
-    crlfDelay: Infinity,
-  });
-
-  const map = new Map(); // key -> record (last one wins)
-  let lineNum = 0;
-  let kept = 0,
-    skipped = 0;
-
-  rl.on('line', (line) => {
-    lineNum++;
-    const trimmed = line.trim();
-    if (!trimmed) return;
-
-    // Strip trailing commas (common when pasting array entries line-by-line)
-    let maybe = trimmed.replace(/,+\s*$/, '');
-
-    // Ignore array wrappers if the input accidentally includes them
-    if (maybe === '[' || maybe === ']') return;
-
-    try {
-      const obj = JSON.parse(maybe);
-      const norm = normalizeRecord(obj);
-      if (!norm) {
-        skipped++;
-        return;
-      }
-      const key = dedupeKey(norm);
-      map.set(key, norm);
-      kept++;
-    } catch {
-      // Incomplete or junk line — skip it
-      skipped++;
-    }
-  });
-
-  await once(rl, 'close');
-
-  const records = Array.from(map.values()).sort((a, b) =>
-    a.date < b.date ? -1 : a.date > b.date ? 1 : 0
-  );
-
-  // Write as a JSON array with one object per line, commas between, wrapped in []
-  const fd = fs.openSync(outPath, 'w');
-  try {
-    fs.writeSync(fd, '[\n');
-    records.forEach((r, i) => {
-      const line = JSON.stringify(r);
-      const comma = i === records.length - 1 ? '' : ',';
-      fs.writeSync(fd, line + comma + '\n');
+  function populateSelect(selectEl, values, allLabel) {
+    selectEl.innerHTML = '';
+    const optAll = document.createElement('option');
+    optAll.value = '';
+    optAll.textContent = allLabel;
+    selectEl.appendChild(optAll);
+    values.forEach(v => {
+      const o = document.createElement('option');
+      o.value = v;
+      o.textContent = v;
+      selectEl.appendChild(o);
     });
-    fs.writeSync(fd, ']\n');
-  } finally {
-    fs.closeSync(fd);
   }
 
-  console.log(
-    `Done. Read lines: ${lineNum}, Parsed: ${kept + skipped}, Kept valid: ${kept}, Unique after dedupe: ${records.length}, Skipped: ${skipped}`
-  );
-  console.log(`Wrote: ${outPath}`);
-}
+  function getFiltered() {
+    const ctry = els.country.value;
+    const cmdy = els.commodity.value;
+    let rows = RAW.map(canonicalize);
 
-run().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+    // view gate that narrows by commodity only (country stays free)
+    const v = els.view.value;
+    if (v === 'chicken') rows = rows.filter(r => /chicken/i.test(r.commodity || ''));
+    if (v === 'soy') rows = rows.filter(r => /soy/i.test(r.commodity || ''));
+
+    // apply explicit filters (ignore product entirely)
+    if (ctry) rows = rows.filter(r => r.country === ctry);
+    if (cmdy) rows = rows.filter(r => r.commodity === cmdy);
+
+    // sort by date ascending for chart
+    rows.sort((a,b)=> a.date - b.date);
+    return rows;
+  }
+
+  function updateKPIs(rows) {
+    if (!rows.length) {
+      els.latest.textContent = '—';
+      els.inr.textContent = '—';
+      els.source.textContent = '—';
+      return;
+    }
+    const last = rows[rows.length - 1];
+    els.latest.textContent = isFinite(last.price) ? `${fmt.format(last.price)}` : '—';
+    els.inr.textContent = isFinite(last.inr) ? `${fmt.format(last.inr)}` : '—';
+    els.source.textContent = last.source || '—';
+  }
+
+  function ensureChart() {
+    if (chart) return chart;
+    chart = new Chart(els.canvas.getContext('2d'), {
+      type: 'line',
+      data: { labels: [], datasets: [{ label: 'Price per kg', data: [], tension: 0.25, pointRadius: 0 }] },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: { ticks: { maxRotation: 0, autoSkip: true } },
+          y: { beginAtZero: false }
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: { intersect: false, mode: 'index' }
+        }
+      }
+    });
+    return chart;
+  }
+
+  function updateChart(rows) {
+    const c = ensureChart();
+    const labels = rows.map(r => r.date.toISOString().slice(0,10));
+    const data = rows.map(r => isFinite(r.price) ? r.price : null);
+    c.data.labels = labels;
+    c.data.datasets[0].data = data;
+    c.update();
+  }
+
+  function refresh() {
+    const rows = getFiltered();
+    updateKPIs(rows);
+    updateChart(rows);
+  }
+
+  async function boot() {
+    // 1) load
+    const res = await fetch('./data.json', { cache: 'no-store' });
+    if (!res.ok) {
+      console.error('Failed to load data.json');
+      return;
+    }
+    RAW = await res.json();
+
+    if (!Array.isArray(RAW) || RAW.length === 0) {
+      console.error('data.json is empty or not an array');
+      return;
+    }
+
+    // 2) collect unique countries/commodities from RAW (ignore product)
+    const sample = canonicalize(RAW[0]); // warms up keys
+    const countries = uniqSorted(RAW.map(r => canonicalize(r).country));
+    const commodities = uniqSorted(RAW.map(r => canonicalize(r).commodity));
+
+    populateSelect(els.country, countries, 'All countries');
+    populateSelect(els.commodity, commodities, 'All commodities');
+
+    // 3) wire events
+    ['change','input'].forEach(evt => {
+      els.view.addEventListener(evt, refresh);
+      els.country.addEventListener(evt, refresh);
+      els.commodity.addEventListener(evt, refresh);
+    });
+
+    /

@@ -82,6 +82,8 @@ function updateCards(data) {
 }
 
 function updateChart(data) {
+    console.log('updateChart called with', data.length, 'records');
+    
     // Group data by country and metric
     const grouped = {};
     
@@ -92,9 +94,11 @@ function updateChart(data) {
         }
         grouped[key].push({
             x: new Date(record.date),
-            y: record.usd_per_kg  // Changed from 'price' to 'usd_per_kg'
+            y: record.usd_per_kg
         });
     });
+    
+    console.log('Grouped data:', Object.keys(grouped));
     
     // Sort each group by date
     Object.keys(grouped).forEach(key => {
@@ -112,58 +116,69 @@ function updateChart(data) {
         fill: false
     }));
     
+    console.log('Datasets created:', datasets.length);
+    console.log('Sample dataset:', datasets[0]);
+    
     const ctx = document.getElementById('priceChart').getContext('2d');
+    console.log('Canvas context:', ctx);
     
     if (priceChart) {
         priceChart.destroy();
     }
     
-    priceChart = new Chart(ctx, {
-        type: 'line',
-        data: { datasets },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            scales: {
-                x: {
-                    type: 'time',
-                    time: {
-                        unit: 'month',
-                        displayFormats: {
-                            month: 'MMM yyyy'
+    console.log('About to create chart...');
+    
+    try {
+        priceChart = new Chart(ctx, {
+            type: 'line',
+            data: { datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: {
+                        type: 'time',
+                        time: {
+                            unit: 'month',
+                            displayFormats: {
+                                month: 'MMM yyyy'
+                            }
+                        },
+                        title: {
+                            display: false
                         }
                     },
-                    title: {
-                        display: false
-                    }
-                },
-                y: {
-                    title: {
-                        display: false
-                    },
-                    ticks: {
-                        callback: function(value) {
-                            return '$' + value.toFixed(2);
+                    y: {
+                        title: {
+                            display: false
+                        },
+                        ticks: {
+                            callback: function(value) {
+                                return '$' + value.toFixed(2);
+                            }
                         }
                     }
-                }
-            },
-            plugins: {
-                legend: {
-                    display: true,
-                    position: 'bottom'
                 },
-                tooltip: {
-                    callbacks: {
-                        label: function(context) {
-                            return context.dataset.label + ': $' + 
-                                context.parsed.y.toFixed(2) + '/kg';
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'bottom'
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                return context.dataset.label + ': $' + 
+                                    context.parsed.y.toFixed(2) + '/kg';
+                            }
                         }
                     }
                 }
             }
-        }
-    });
+        });
+        console.log('Chart created successfully!', priceChart);
+    } catch (error) {
+        console.error('Error creating chart:', error);
+    }
 }
 
 function getColor(index, alpha = 1) {

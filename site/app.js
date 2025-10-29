@@ -27,11 +27,11 @@ async function load() {
     // chicken hierarchy (check specific cuts first)
     // breast synonyms
     if (c.includes('breast') || c.includes('b/s') || c.includes('fillet') || c.includes('fillets') || c.includes('breast fillet')) {
-      return 'chicken breast';
+      return 'chicken';
     }
     // thigh synonyms (sometimes "legs" used as proxy; map to thigh if asked)
-    if (c.includes('thigh')) return 'chicken thigh';
-    if (c.includes('leg')) return 'chicken thigh'; // your earlier instruction to treat EU "legs" as thigh
+    if (c.includes('thigh')) return 'chicken';
+    if (c.includes('leg')) return 'chicken'; // your earlier instruction to treat EU "legs" as thigh
 
     // generic chicken (whole or unspecified)
     if (c.includes('chicken') || c.includes('broiler') || c.includes('poultry')) return 'chicken';
